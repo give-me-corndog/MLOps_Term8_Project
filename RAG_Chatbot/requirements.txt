@@ -1,0 +1,7 @@
+flask
+flask-cors
+pymupdf
+pymupdf4llm
+ollama
+chromadb
+langchain-text-splitters
