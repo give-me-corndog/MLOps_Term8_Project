@@ -4,7 +4,8 @@ import uuid
 import pymupdf4llm
 import ollama
 import chromadb
-from typing import List, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Dict, Optional, Tuple
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # ─────────────────────────────────────────────────────────────
@@ -33,7 +34,9 @@ text_splitter = RecursiveCharacterTextSplitter(
     add_start_index=True
 )
 
-_client = chromadb.Client()
+CHROMA_PATH = os.environ.get("CHROMA_PATH", "./chroma_store")
+
+_client = chromadb.PersistentClient(path=CHROMA_PATH)
 _collection = _client.get_or_create_collection(name=COLLECTION_NAME)
 
 # in-memory session store (replace with Redis/DB in production)
@@ -81,8 +84,33 @@ def build_history_text(history: List[Dict]) -> str:
 # INGESTION
 # ─────────────────────────────────────────────────────────────
 
-def ingest_pdf(file_path: str) -> int:
-    """Ingest a single PDF into the vector store."""
+EMBED_WORKERS = int(os.environ.get("EMBED_WORKERS", "4"))   # parallel embedding threads
+
+def _already_ingested(file_name: str) -> bool:
+    """Return True if this file has any chunks in the collection."""
+    results = _collection.get(where={"source": file_name}, limit=1)
+    return len(results["ids"]) > 0
+
+
+def _embed_chunk(args: Tuple[int, str]) -> Tuple[int, list]:
+    """Embed a single chunk; designed to run in a thread pool."""
+    i, text = args
+    emb = ollama.embeddings(model=EMBED_MODEL, prompt=text)["embedding"]
+    return i, emb
+
+def ingest_pdf(file_path: str, force: bool = False) -> int:
+    """Ingest a single PDF into the vector store.
+
+    Skips the file if it has already been ingested unless *force* is True.
+    Embeddings are computed in parallel (EMBED_WORKERS threads).
+    """
+    file_name = os.path.basename(file_path)
+
+    if not force and _already_ingested(file_name):
+        # Return the existing chunk count rather than re-ingesting.
+        existing = _collection.get(where={"source": file_name})
+        return len(existing["ids"])
+
     md_text = pymupdf4llm.to_markdown(
         file_path,
         use_ocr=True,
@@ -97,24 +125,26 @@ def ingest_pdf(file_path: str) -> int:
     )
 
     chunks = text_splitter.create_documents([clean_text])
-    file_name = os.path.basename(file_path)
+    texts = [c.page_content for c in chunks]
 
-    for i, chunk in enumerate(chunks):
-        emb = ollama.embeddings(
-            model=EMBED_MODEL,
-            prompt=chunk.page_content
-        )["embedding"]
+    # ── Parallel embedding ────────────────────────────────────────────────
+    embeddings: List[list] = [None] * len(texts)
+    with ThreadPoolExecutor(max_workers=EMBED_WORKERS) as pool:
+        futures = {pool.submit(_embed_chunk, (i, t)): i for i, t in enumerate(texts)}
+        for future in as_completed(futures):
+            i, emb = future.result()
+            embeddings[i] = emb
+    # ─────────────────────────────────────────────────────────────────────
 
-        _collection.add(
-            ids=[f"{file_name}_{i}"],
-            embeddings=[emb],
-            documents=[chunk.page_content],
-            metadatas=[{
-                "source": file_name,
-                "chunk": i,
-                "type": "document"
-            }]
-        )
+    _collection.add(
+        ids=[f"{file_name}_{i}" for i in range(len(chunks))],
+        embeddings=embeddings,
+        documents=texts,
+        metadatas=[
+            {"source": file_name, "chunk": i, "type": "document"}
+            for i in range(len(chunks))
+        ]
+    )
 
     return len(chunks)
 

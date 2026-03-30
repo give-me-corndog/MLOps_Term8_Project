@@ -31,6 +31,7 @@ def chat():
     """Answer a question using the RAG pipeline."""
     data = request.get_json(force=True)
     question = (data.get("question") or "").strip()
+    session_id = data.get("session_id") or None
     if not question:
         return jsonify({"error": "No question provided."}), 400
 
@@ -38,7 +39,7 @@ def chat():
         return jsonify({"error": "No documents ingested yet. Please upload PDFs first."}), 400
 
     try:
-        result = rag.query(question)
+        result = rag.query(question, session_id=session_id)
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -576,6 +576,7 @@
   const API = "";   // same origin; change to "http://localhost:5000" if serving separately
   let pendingFiles = [];
   let isThinking = false;
+  let sessionId = null;   // persists across turns so history works
 
   // ── Auto-resize textarea ─────────────────────────────────────────────────
   const textarea = document.getElementById("question-input");
@@ -708,12 +709,17 @@
       const res = await fetch(`${API}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question })
+        body: JSON.stringify({ question, session_id: sessionId })
       });
       const data = await res.json();
       removeThinking(thinkId);
 
       if (!res.ok) throw new Error(data.error || "Unknown error");
+
+      // Capture session_id from first response so all follow-up turns
+      // share the same conversation history on the server.
+      if (data.session_id) sessionId = data.session_id;
+
       appendMessage("assistant", data.answer, data.sources || []);
     } catch (err) {
       removeThinking(thinkId);
