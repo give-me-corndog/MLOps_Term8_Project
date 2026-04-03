@@ -21,8 +21,12 @@ PDF_FOLDER = "data/"
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 300
 
-TOP_K = 5
+TOP_K = 3
 MAX_HISTORY_TURNS = 6   # last 3 user+assistant exchanges
+
+# Maximum number of chunks fed to the model for summarization.
+# Increase if your model has a large context window.
+SUMMARY_CHUNK_LIMIT = 20
 
 # ─────────────────────────────────────────────────────────────
 # INIT
@@ -72,11 +76,9 @@ def build_history_text(history: List[Dict]) -> str:
     """Convert structured history into prompt text."""
     recent = history[-MAX_HISTORY_TURNS:]
     lines = []
-
     for msg in recent:
         role = msg["role"].upper()
         lines.append(f"{role}: {msg['content']}")
-
     return "\n".join(lines)
 
 
@@ -84,30 +86,24 @@ def build_history_text(history: List[Dict]) -> str:
 # INGESTION
 # ─────────────────────────────────────────────────────────────
 
-EMBED_WORKERS = int(os.environ.get("EMBED_WORKERS", "4"))   # parallel embedding threads
+EMBED_WORKERS = int(os.environ.get("EMBED_WORKERS", "4"))
+
 
 def _already_ingested(file_name: str) -> bool:
-    """Return True if this file has any chunks in the collection."""
     results = _collection.get(where={"source": file_name}, limit=1)
     return len(results["ids"]) > 0
 
 
 def _embed_chunk(args: Tuple[int, str]) -> Tuple[int, list]:
-    """Embed a single chunk; designed to run in a thread pool."""
     i, text = args
     emb = ollama.embeddings(model=EMBED_MODEL, prompt=text)["embedding"]
     return i, emb
 
-def ingest_pdf(file_path: str, force: bool = False) -> int:
-    """Ingest a single PDF into the vector store.
 
-    Skips the file if it has already been ingested unless *force* is True.
-    Embeddings are computed in parallel (EMBED_WORKERS threads).
-    """
+def ingest_pdf(file_path: str, force: bool = False) -> int:
     file_name = os.path.basename(file_path)
 
     if not force and _already_ingested(file_name):
-        # Return the existing chunk count rather than re-ingesting.
         existing = _collection.get(where={"source": file_name})
         return len(existing["ids"])
 
@@ -127,14 +123,12 @@ def ingest_pdf(file_path: str, force: bool = False) -> int:
     chunks = text_splitter.create_documents([clean_text])
     texts = [c.page_content for c in chunks]
 
-    # ── Parallel embedding ────────────────────────────────────────────────
     embeddings: List[list] = [None] * len(texts)
     with ThreadPoolExecutor(max_workers=EMBED_WORKERS) as pool:
         futures = {pool.submit(_embed_chunk, (i, t)): i for i, t in enumerate(texts)}
         for future in as_completed(futures):
             i, emb = future.result()
             embeddings[i] = emb
-    # ─────────────────────────────────────────────────────────────────────
 
     _collection.add(
         ids=[f"{file_name}_{i}" for i in range(len(chunks))],
@@ -172,6 +166,7 @@ def embed(text: str):
 
 
 def retrieve(question: str, n_results: int = TOP_K):
+    """Standard vector-search retrieval."""
     query_emb = embed(question)
 
     results = _collection.query(
@@ -179,19 +174,78 @@ def retrieve(question: str, n_results: int = TOP_K):
         n_results=n_results
     )
 
-    docs = results["documents"][0]
-    metas = results["metadatas"][0]
+    docs      = results["documents"][0]
+    metas     = results["metadatas"][0]
     distances = results.get("distances", [[]])[0]
 
-    filtered_docs = []
+    filtered_docs  = []
     filtered_metas = []
 
     for doc, meta, dist in zip(docs, metas, distances):
-        if dist < 0.7:  # tune this (lower = stricter)
+        if dist < 0.5:
             filtered_docs.append(doc)
             filtered_metas.append(meta)
 
     return filtered_docs, filtered_metas
+
+
+def retrieve_all_chunks_for_source(file_name: str) -> Tuple[List[str], List[Dict]]:
+    """
+    Fetch every stored chunk for a given source file, ordered by chunk index.
+    Used for whole-document summarization — bypasses vector search entirely.
+    """
+    results = _collection.get(
+        where={"source": file_name},
+        include=["documents", "metadatas"]
+    )
+    if not results["ids"]:
+        return [], []
+
+    pairs = sorted(
+        zip(results["documents"], results["metadatas"]),
+        key=lambda x: x[1].get("chunk", 0)
+    )
+    docs  = [p[0] for p in pairs]
+    metas = [p[1] for p in pairs]
+    return docs, metas
+
+
+def detect_summarization_target(question: str) -> Optional[str]:
+    """
+    Return the source file name if the question is a summarization request
+    targeting a known ingested document, otherwise return None.
+
+    Matches patterns like:
+      "Summarize lecture1.pdf"
+      "Give me a summary of Lecture 1"
+      "Can you summarise week3.pdf?"
+      "What is lecture1 about?"
+    """
+    q_lower = question.lower()
+
+    is_summary_request = any(kw in q_lower for kw in (
+        "summarize", "summarise", "summary", "overview",
+        "what is", "what's", "about", "outline", "recap"
+    ))
+    if not is_summary_request:
+        return None
+
+    # Get all known source names from the collection
+    all_metas     = _collection.get(include=["metadatas"])["metadatas"]
+    known_sources = {m["source"] for m in all_metas if "source" in m}
+
+    # 1. Exact filename match (e.g. "lecture1.pdf")
+    for source in known_sources:
+        if source.lower() in q_lower:
+            return source
+
+    # 2. Stem match — filename without extension (e.g. "lecture1")
+    for source in known_sources:
+        stem = os.path.splitext(source)[0].lower()
+        if stem and stem in q_lower:
+            return source
+
+    return None
 
 
 def build_context(docs: List[str]) -> str:
@@ -204,8 +258,7 @@ def build_context(docs: List[str]) -> str:
 
 def build_prompt(question: str, context: str, history_text: str) -> str:
     if context.strip():
-        return f"""
-You are a helpful assistant.
+        return f"""You are a helpful teaching assistant.
 
 Use the context below ONLY if it is relevant to the question.
 
@@ -218,11 +271,9 @@ Context:
 Question:
 {question}
 
-Answer:
-"""
+Answer:"""
     else:
-        return f"""
-You are a helpful assistant.
+        return f"""You are a helpful teaching assistant.
 
 Conversation:
 {history_text}
@@ -230,8 +281,26 @@ Conversation:
 Question:
 {question}
 
-Answer:
-"""
+Answer:"""
+
+
+def build_summary_prompt(file_name: str, context: str, history_text: str) -> str:
+    return f"""You are a helpful teaching assistant. A student has asked you to summarize a document.
+
+Document name: {file_name}
+
+Below is the full content of the document split into sections. Read all sections and produce a well-structured summary covering:
+- The main topic and purpose of the document
+- Key concepts, arguments, or findings
+- Any important details a student should know
+
+Conversation:
+{history_text}
+
+Document content:
+{context}
+
+Summary:"""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -239,10 +308,7 @@ Answer:
 # ─────────────────────────────────────────────────────────────
 
 def generate(prompt: str) -> str:
-    response = ollama.generate(
-        model=GENERATE_MODEL,
-        prompt=prompt
-    )
+    response = ollama.generate(model=GENERATE_MODEL, prompt=prompt)
     return response["response"].strip()
 
 
@@ -255,38 +321,68 @@ def query(
     session_id: Optional[str] = None,
     n_results: int = TOP_K
 ) -> dict:
-    # 1. session
-    session_id = get_session(session_id)
-    history = get_history(session_id)
+    """
+    Run the full RAG pipeline and return a result dict.
 
-    # 2. retrieval
-    docs, metas = retrieve(question, n_results=n_results)
+    Automatically routes summarization requests (e.g. "Summarize lecture1.pdf")
+    to a full-document retrieval path instead of vector search.
+    """
+    import time
+    t0 = time.time()
 
-    if len(docs) == 0:
-        context = ""
-    else:
-        context = build_context(docs)
-
-    # 3. history
+    session_id   = get_session(session_id)
+    history      = get_history(session_id)
     history_text = build_history_text(history)
 
-    # 4. prompt
-    prompt = build_prompt(question, context, history_text)
+    # ── Route: summarization vs. standard retrieval ───────────────────────
+    summary_target = detect_summarization_target(question)
 
-    # 5. generate
-    answer = generate(prompt)
+    if summary_target:
+        docs, metas = retrieve_all_chunks_for_source(summary_target)
 
-    # 6. update memory
+        if not docs:
+            answer  = (
+                f"I couldn't find any content for '{summary_target}' in the knowledge base. "
+                "Please make sure the document has been ingested."
+            )
+            sources = []
+            docs    = []
+        else:
+            # Cap chunks to stay within the model's context window.
+            # Uses evenly-spaced sampling to preserve coverage across the doc.
+            if len(docs) > SUMMARY_CHUNK_LIMIT:
+                step  = len(docs) / SUMMARY_CHUNK_LIMIT
+                docs  = [docs[int(i * step)]  for i in range(SUMMARY_CHUNK_LIMIT)]
+                metas = [metas[int(i * step)] for i in range(SUMMARY_CHUNK_LIMIT)]
+
+            context = build_context(docs)
+            prompt  = build_summary_prompt(summary_target, context, history_text)
+            answer  = generate(prompt)
+            sources = [summary_target]
+
+        mode = "summarize"
+
+    else:
+        # Standard vector-search path
+        docs, metas = retrieve(question, n_results=n_results)
+        context     = build_context(docs) if docs else ""
+        prompt      = build_prompt(question, context, history_text)
+        answer      = generate(prompt)
+        sources     = list({m["source"] for m in metas})
+        mode        = "retrieve"
+
+    latency_ms = (time.time() - t0) * 1000
+
     append_history(session_id, "user", question)
     append_history(session_id, "assistant", answer)
 
-    # 7. sources
-    sources = list({m["source"] for m in metas})
-
     return {
-        "answer": answer,
-        "sources": sources,
-        "session_id": session_id
+        "answer":         answer,
+        "sources":        sources,
+        "session_id":     session_id,
+        "context_chunks": docs,
+        "latency_ms":     round(latency_ms, 1),
+        "mode":           mode,
     }
 
 
@@ -300,7 +396,6 @@ def clear_collection():
         _client.delete_collection(name=COLLECTION_NAME)
     except Exception:
         pass
-
     _collection = _client.get_or_create_collection(name=COLLECTION_NAME)
 
 
@@ -309,6 +404,5 @@ def collection_count() -> int:
 
 
 def clear_sessions():
-    """Reset all conversation memory."""
     global _sessions
     _sessions = {}
