@@ -62,7 +62,11 @@ def chat():
             "session_id": result["session_id"],
             "latency_ms": result["latency_ms"],
             "mode":       result.get("mode", "retrieve"),
+            "blocked":    result.get("blocked", False),
         }
+        if result.get("blocked"):
+            response["block_layer"]  = result.get("block_layer")
+            response["block_reason"] = result.get("block_reason")
 
         if run_eval:
             # Run evaluation in a background thread so the user gets
