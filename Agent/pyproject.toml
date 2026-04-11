@@ -1,0 +1,16 @@
+[project]
+name = "edimension-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiogram>=3.22.0",
+    "boto3>=1.40.0",
+    "browser-use>=0.12.2",
+    "cryptography>=45.0.0",
+    "fastapi>=0.116.0",
+    "pydantic>=2.11.0",
+    "python-dotenv>=1.1.0",
+    "uvicorn>=0.35.0",
+]
