@@ -122,7 +122,11 @@ CLEANUP_AFTER_UPLOAD=true
 # =========================
 # Local paths
 # =========================
+LOCAL_ARTIFACT_ROOT=./artifacts
 DOWNLOADS_DIR=./artifacts/downloads
+SCREENSHOTS_DIR=./artifacts/screenshots
+VIDEOS_DIR=./artifacts/videos
+TRACES_DIR=./artifacts/traces
 
 # =========================
 # Ollama
@@ -131,6 +135,18 @@ OLLAMA_HOST=http://localhost:11434   # or http://<remote-ip>:11434
 RAG_EMBED_MODEL=qwen3-embedding:0.6b
 RAG_GENERATE_MODEL=ministral-3
 RAG_GUARD_MODEL=ministral-3
+
+# =========================
+# RAG Settings
+# =========================
+CHROMA_PATH=./chroma_store
+RAG_CHUNK_SIZE=800
+RAG_CHUNK_OVERLAP=300
+RAG_TOP_K=3
+RAG_MAX_HISTORY=6
+RAG_SUMMARY_LIMIT=20
+EMBED_WORKERS=4
+
 ```
 
 ---
