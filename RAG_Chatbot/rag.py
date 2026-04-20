@@ -251,7 +251,6 @@ def retrieve_all_chunks_for_source(file_name: str) -> Tuple[List[str], List[Dict
 
 
 def detect_summarization_target(question: str) -> Optional[str]:
-    """Return the source filename if the question targets a known document for summarisation."""
     q = question.lower()
     if not any(kw in q for kw in (
         "summarize", "summarise", "summary", "overview",
@@ -262,13 +261,18 @@ def detect_summarization_target(question: str) -> Optional[str]:
     known = {m["source"] for m in _collection.get(include=["metadatas"])["metadatas"]
              if "source" in m}
 
-    for src in known:              # exact filename
+    # Exact filename match (original logic — fine)
+    for src in known:
         if src.lower() in q:
             return src
-    for src in known:              # stem only (no extension)
+
+    # Word-level stem match (FIXED)
+    for src in known:
         stem = os.path.splitext(src)[0].lower()
-        if stem and stem in q:
+        stem_words = re.split(r"[\s,_\-]+", stem)  # ["capstone", "syllabus", "id"]
+        if any(word and word in q for word in stem_words):
             return src
+
     return None
 
 
