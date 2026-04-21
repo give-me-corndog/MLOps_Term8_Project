@@ -142,10 +142,18 @@ RAG_GUARD_MODEL=ministral-3
 CHROMA_PATH=./chroma_store
 RAG_CHUNK_SIZE=800
 RAG_CHUNK_OVERLAP=300
-RAG_TOP_K=3
+RAG_TOP_K=2
 RAG_MAX_HISTORY=6
 RAG_SUMMARY_LIMIT=20
 EMBED_WORKERS=4
+RERANK_MODEL=ministral-3
+RERANK_TOP_N=9
+
+# =========================
+# Observability & Evaluation
+# =========================
+EVAL_ENABLED=true
+EVAL_MODEL=ministral-3
 
 ```
 
