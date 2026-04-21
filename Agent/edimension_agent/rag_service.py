@@ -273,6 +273,7 @@ def build_history_text(history: List[Dict]) -> str:
 # HISTORY CONTEXT CONTAMINATION (prevention)
 # =============================================================
 
+<<<<<<< HEAD
 _HISTORY_RELEVANCE_PROMPT = """\
 You are a conversation analyst. Decide whether the NEW QUESTION is a follow-up to the CONVERSATION HISTORY or a completely new, unrelated topic.
 
@@ -317,6 +318,8 @@ def _is_history_relevant(question: str, history: List[Dict]) -> bool:
         logger.warning("History relevance check failed: %s — defaulting to use history", exc)
         return True
 
+=======
+>>>>>>> 4229a8a (RAG Eval in place; Fixed RAG retrieving wrong chunk)
 # =============================================================
 # INGESTION
 # =============================================================
