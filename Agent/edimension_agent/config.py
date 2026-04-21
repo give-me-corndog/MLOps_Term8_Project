@@ -24,8 +24,13 @@ class Settings:
 
     downloads_dir: Path
 
+    browser_llm_provider: str
+
     google_model: str
     google_temperature: float
+
+    browser_ollama_model: str
+    browser_ollama_host: str
 
     do_spaces_key: str
     do_spaces_secret: str
@@ -79,8 +84,11 @@ def load_settings() -> Settings:
         app_encryption_key=encryption_key,
         db_path=db_path,
         downloads_dir=downloads_dir,
+        browser_llm_provider=os.getenv("BROWSER_LLM_PROVIDER", "google").strip().lower(),
         google_model=os.getenv("GOOGLE_MODEL", "gemini-flash-latest").strip(),
         google_temperature=float(os.getenv("GOOGLE_TEMPERATURE", "0.2")),
+        browser_ollama_model=os.getenv("BROWSER_OLLAMA_MODEL", "qwen3.5").strip(),
+        browser_ollama_host=os.getenv("OLLAMA_HOST", "http://localhost:11434").strip(),
         do_spaces_key=os.getenv("DO_SPACES_KEY", "").strip(),
         do_spaces_secret=os.getenv("DO_SPACES_SECRET", "").strip(),
         do_spaces_region=do_spaces_region,
