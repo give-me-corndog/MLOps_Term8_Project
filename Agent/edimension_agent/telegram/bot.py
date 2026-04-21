@@ -27,7 +27,8 @@ from .. import rag_service
 
 logger = logging.getLogger(__name__)
 
-# Per-chat RAG session IDs: maps chat_id --> session_id string.
+# Per-chat RAG session IDs (in-memory; survives only for the process lifetime).
+# Maps chat_id → session_id string.
 _rag_sessions: dict[int, str] = {}
 
 
@@ -83,8 +84,42 @@ class TelegramAgentBot:
     def _is_authorized(self, chat_id: int) -> bool:
         return self.db.ensure_user(chat_id).authorized
 
+    @staticmethod
+    def _split_message(text: str, limit: int = 4096) -> list[str]:
+        """
+        Split text into chunks that fit within Telegram's character limit.
+        Tries to break on newlines first, then on spaces, then hard-cuts as
+        a last resort so no chunk ever exceeds `limit` characters.
+        """
+        if len(text) <= limit:
+            return [text]
+
+        chunks: list[str] = []
+        while text:
+            if len(text) <= limit:
+                chunks.append(text)
+                break
+            # Prefer a newline boundary within the limit.
+            cut = text.rfind("\n", 0, limit)
+            if cut <= 0:
+                # Fall back to the last space within the limit.
+                cut = text.rfind(" ", 0, limit)
+            if cut <= 0:
+                # Hard cut — no whitespace found.
+                cut = limit
+            chunks.append(text[:cut].rstrip())
+            text = text[cut:].lstrip()
+        return chunks
+
     async def _send(self, chat_id: int, text: str) -> None:
-        await self.bot.send_message(chat_id=chat_id, text=text)
+        """Send a message, splitting it across multiple messages if needed."""
+        for chunk in self._split_message(text):
+            await self.bot.send_message(chat_id=chat_id, text=chunk)
+
+    async def _reply(self, message: Message, text: str) -> None:
+        """Reply to a Message object, splitting if needed."""
+        for chunk in self._split_message(text):
+            await message.answer(chunk)
 
     def _spaces_client(self):
         return boto3.client(
@@ -198,7 +233,7 @@ class TelegramAgentBot:
             if task is None or task["chat_id"] != chat_id:
                 await message.answer("Task not found.")
                 return
-            await message.answer(
+            await self._reply(message,
                 f"Task {parts[1].strip()}: {task['status']}\n"
                 f"Query: {task['query']}\n"
                 f"Error: {task.get('error_message') or '-'}"
@@ -211,7 +246,7 @@ class TelegramAgentBot:
         lines = ["Recent tasks:"]
         for item in tasks:
             lines.append(f"- {item['task_id']}: {item['status']} | {item['query']}")
-        await message.answer("\n".join(lines))
+        await self._reply(message, "\n".join(lines))
 
     async def _handle_help(self, message: Message) -> None:
         await message.answer(
@@ -305,7 +340,7 @@ class TelegramAgentBot:
         for fname, count in results.items():
             status = f"{count} chunks" if count >= 0 else "❌ failed"
             lines.append(f"  • {fname} → {status}")
-        await message.answer("\n".join(lines))
+        await self._reply(message, "\n".join(lines))
 
     async def _handle_docs(self, message: Message) -> None:
         """List documents in the user's knowledge base."""
@@ -324,7 +359,7 @@ class TelegramAgentBot:
         lines = [f"📚 {len(files)} document(s) in your knowledge base:"]
         for f in files:
             lines.append(f"  • {f}")
-        await message.answer("\n".join(lines))
+        await self._reply(message, "\n".join(lines))
 
     async def _handle_clearchat(self, message: Message) -> None:
         """Clear conversation history for this user (keeps documents)."""
@@ -426,7 +461,7 @@ class TelegramAgentBot:
         mode    = result.get("mode", "retrieve")
 
         if result.get("blocked"):
-            await message.answer(answer)
+            await self._reply(message, answer)
             return
 
         footer = ""
@@ -435,7 +470,7 @@ class TelegramAgentBot:
         if mode == "summarize":
             footer += "\n_(summary mode)_"
 
-        await message.answer(answer + footer)
+        await self._reply(message, answer + footer)
 
     async def _ingest_uploaded_pdf(self, message: Message) -> None:
         """Download a PDF sent directly to the chat and ingest it."""
