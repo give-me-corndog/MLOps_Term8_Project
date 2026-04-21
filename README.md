@@ -1,6 +1,6 @@
 The entire project is integrated under **Agent**
 
-The **RAG_Chatbot** folder is for chatbot/embedding model testing
+The **RAG_Chatbot** folder was for chatbot/embedding model testing
 
 **Models Tested**
 | Chatbot Models   | Embedding Model        |
