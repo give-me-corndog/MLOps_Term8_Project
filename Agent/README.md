@@ -60,6 +60,9 @@ cd <project-dir>/Agent
 # Create/sync virtual environment and install dependencies from pyproject.toml
 uv sync
 
+# For monitoring
+uv pip install --upgrade 'lmnr[all]'
+
 # Pull the required Ollama models
 ollama pull ministral-3
 ollama pull qwen3-embedding:0.6b
