@@ -1,16 +1,18 @@
 """
-rag_service.py
-~~~~~~~~~~~~~~
 Async-friendly RAG service for the Telegram bot.
 
 Key differences from the Flask-era rag.py:
-- Uses Ollama for embeddings and generation (same models as the prototype).
-  The Ollama host is configurable via OLLAMA_HOST so it can run on the
-  same machine as the bot (localhost) or on a separate server.
+- Uses Ollama for embeddings and generation. The Ollama host is configurable via OLLAMA_HOST 
+  so it can run on the same machine as the bot or on a separate server. 
+  (Note: The entire project folder is designed to be easily transportable. If you are running this on a local 
+  machine, make sure your firewall is not blocking anything, and your ollama is open)
+
 - Every user gets their own ChromaDB collection, so documents are
   fully isolated between students.
-- `ingest_from_spaces()` pulls PDFs directly from DigitalOcean Spaces
+
+- ingest_from_spaces() pulls PDFs directly from DigitalOcean Spaces
   for a given student prefix and ingests them in one call.
+
 - All heavy I/O is run in a thread-pool so it doesn't block the
   asyncio event loop.
 
@@ -23,9 +25,11 @@ RAG_GUARD_MODEL      Ollama guardrail model  (default: ministral-3)
 CHROMA_PATH          Path for the ChromaDB store (default: ./chroma_store)
 RAG_CHUNK_SIZE       Token chunk size  (default: 800)
 RAG_CHUNK_OVERLAP    Chunk overlap     (default: 300)
-RAG_TOP_K            Retrieval top-k   (default: 3)
+RAG_TOP_K            Number of top-k chunks to keep after re-rank   (default: 3)
 RAG_MAX_HISTORY      Conversation turns kept (default: 6)
 RAG_SUMMARY_LIMIT    Max chunks for summarisation (default: 20)
+RERANK_MODEL         Model used to re-rank chunks after retrieval (default: ministral-3)
+RERANK_TOP_N         Number of chunks to be re-ranked (default: 10)
 EMBED_WORKERS        Thread-pool size for parallel embedding (default: 4)
 """
 
@@ -48,29 +52,35 @@ import ollama as _ollama
 import pymupdf4llm
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+import math
+import threading
+
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 # CONFIG  (override via environment variables)
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 
-OLLAMA_HOST    = os.environ.get("OLLAMA_HOST",         "http://localhost:11434")
-EMBED_MODEL    = os.environ.get("RAG_EMBED_MODEL",    "qwen3-embedding:0.6b")
-GENERATE_MODEL = os.environ.get("RAG_GENERATE_MODEL", "ministral-3")
-GUARD_MODEL    = os.environ.get("RAG_GUARD_MODEL",    "ministral-3")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST","http://localhost:11434")
+EMBED_MODEL = os.environ.get("RAG_EMBED_MODEL","qwen3-embedding:0.6b")
+GENERATE_MODEL = os.environ.get("RAG_GENERATE_MODEL","ministral-3")
+GUARD_MODEL = os.environ.get("RAG_GUARD_MODEL","ministral-3")
+EVAL_MODEL = os.environ.get("EVAL_MODEL","ministral-3") #os.environ.get("EVAL_MODEL","mistral-large-3:675b-cloud")
 
-CHUNK_SIZE        = int(os.environ.get("RAG_CHUNK_SIZE",    "800"))
-CHUNK_OVERLAP     = int(os.environ.get("RAG_CHUNK_OVERLAP", "300"))
-TOP_K             = int(os.environ.get("RAG_TOP_K",         "3"))
-MAX_HISTORY_TURNS = int(os.environ.get("RAG_MAX_HISTORY",   "6"))
-SUMMARY_CHUNK_LIMIT = int(os.environ.get("RAG_SUMMARY_LIMIT", "20"))
-EMBED_WORKERS     = int(os.environ.get("EMBED_WORKERS",     "4"))
+CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE","800"))
+CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP","300"))
+TOP_K = int(os.environ.get("RAG_TOP_K","3"))
+MAX_HISTORY_TURNS = int(os.environ.get("RAG_MAX_HISTORY","6"))
+SUMMARY_CHUNK_LIMIT = int(os.environ.get("RAG_SUMMARY_LIMIT","20"))
+EMBED_WORKERS = int(os.environ.get("EMBED_WORKERS","4"))
+RERANK_MODEL  = os.environ.get("RAG_RERANK_MODEL","ministral-3")
+RERANK_TOP_N  = int(os.environ.get("RAG_RERANK_TOP_N","10")) # This has to be higher than top_k. This one will be the initial pull
 
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "./chroma_store")
 
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 # INIT
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 
 _ollama_client = _ollama.Client(host=OLLAMA_HOST)
 
@@ -82,15 +92,15 @@ _text_splitter = RecursiveCharacterTextSplitter(
     add_start_index=True,
 )
 
-# in-memory session store: session_id → list of {role, content}
+# in-memory session store: session_id -> list of {role, content}
 _sessions: Dict[str, List[Dict]] = {}
 
 _executor = ThreadPoolExecutor(max_workers=EMBED_WORKERS)
 
 
-# ─────────────────────────────────────────────────────────────
-# HELPERS – per-user collection name
-# ─────────────────────────────────────────────────────────────
+# =============================================================
+# HELPERS
+# =============================================================
 
 def _collection_name(chat_id: int) -> str:
     return f"user_{chat_id}"
@@ -100,9 +110,9 @@ def _get_collection(chat_id: int) -> chromadb.Collection:
     return _chroma_client.get_or_create_collection(name=_collection_name(chat_id))
 
 
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 # OLLAMA WRAPPERS
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 
 def _embed_text(text: str) -> list:
     return _ollama_client.embeddings(model=EMBED_MODEL, prompt=text)["embedding"]
@@ -128,15 +138,16 @@ def _run_guard(prompt: str) -> Tuple[bool, str]:
         return True, "Guard model unavailable; defaulting to safe."
 
 
-# ─────────────────────────────────────────────────────────────
-# GUARDRAIL PROMPTS  (identical to the Flask-era rag.py)
-# ─────────────────────────────────────────────────────────────
+# =============================================================
+# GUARDRAIL PROMPTS
+# =============================================================
 
 _INPUT_GUARD_PROMPT = """\
 You are a strict content safety classifier for a university Teaching Assistant chatbot.
 Decide whether the student's message is SAFE to process.
 
 The chatbot may only help with:
+- Administrative matters of the university (e.g. project due dates, exam venues, etc.)
 - Questions about course content, lecture notes, or uploaded study materials
 - General academic study questions (concepts, definitions, worked examples)
 - Summarising or discussing uploaded documents
@@ -191,9 +202,9 @@ def check_output(question: str, answer: str) -> Tuple[bool, str]:
     return _run_guard(_OUTPUT_GUARD_PROMPT.format(question=question, answer=answer))
 
 
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 # SESSION MANAGEMENT
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 
 def get_or_create_session(session_id: Optional[str] = None) -> str:
     if not session_id:
@@ -219,9 +230,9 @@ def build_history_text(history: List[Dict]) -> str:
     return "\n".join(f"{m['role'].upper()}: {m['content']}" for m in recent)
 
 
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 # INGESTION
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 
 def _already_ingested(collection: chromadb.Collection, file_name: str) -> bool:
     return len(collection.get(where={"source": file_name}, limit=1)["ids"]) > 0
@@ -301,9 +312,9 @@ def ingest_from_spaces(
     return results
 
 
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 # RETRIEVAL
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 
 def _retrieve(
     collection: chromadb.Collection,
@@ -317,11 +328,45 @@ def _retrieve(
 
     filtered_docs, filtered_metas = [], []
     for doc, meta, dist in zip(docs, metas, distances):
-        if dist < 0.5:
-            filtered_docs.append(doc)
-            filtered_metas.append(meta)
+        #if dist < 0.5:
+        filtered_docs.append(doc)
+        filtered_metas.append(meta)
     return filtered_docs, filtered_metas
 
+def _rerank_chunks(question: str, docs: List[str], metas: List[Dict], top_k: int) -> Tuple[List[str], List[Dict]]:
+    """
+    Uses the LLM to score chunks and returns the top_k most relevant ones.
+    """
+    if not docs:
+        return [], []
+
+    scored_results = []
+    
+    for doc, meta in zip(docs, metas):
+        prompt = f"""
+        On a scale of 0-10, how relevant is the following document chunk to the user's question?
+        Only reply with a single integer.
+
+        Question: {question}
+        Document Chunk: {doc}
+        
+        Relevance Score (0-10):"""
+        
+        try:
+            response = _ollama_client.generate(model=RERANK_MODEL, prompt=prompt)["response"].strip()
+            # Extract the first digit found in the response
+            score_match = re.search(r'\d+', response)
+            score = int(score_match.group()) if score_match else 0
+            scored_results.append((score, doc, meta))
+        except Exception as e:
+            logger.warning(f"Reranking error for chunk: {e}")
+            scored_results.append((0, doc, meta))
+
+    # Sort by score descending and take the top_k
+    scored_results.sort(key=lambda x: x[0], reverse=True)
+    top_results = scored_results[:top_k]
+    
+    return [r[1] for r in top_results], [r[2] for r in top_results]
 
 def _retrieve_all_for_source(
     collection: chromadb.Collection,
@@ -383,9 +428,9 @@ def clear_user_collection(chat_id: int) -> None:
     _chroma_client.get_or_create_collection(name=name)
 
 
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 # PROMPTS
-# ─────────────────────────────────────────────────────────────
+# =============================================================
 
 def _build_prompt(question: str, context: str, history_text: str) -> str:
     if context.strip():
@@ -416,15 +461,15 @@ def _build_summary_prompt(file_name: str, context: str, history_text: str) -> st
     )
 
 
-# ─────────────────────────────────────────────────────────────
-# MAIN QUERY PIPELINE  (sync; wrap with run_in_executor for async)
-# ─────────────────────────────────────────────────────────────
+# =============================================================
+# MAIN QUERY PIPELINE
+# =============================================================
 
 def query_sync(
-    chat_id:    int,
-    question:   str,
+    chat_id: int,
+    question: str,
     session_id: Optional[str] = None,
-    n_results:  int = TOP_K,
+    n_results: int = TOP_K,
 ) -> dict:
     """
     Full RAG pipeline for a single user.
@@ -455,18 +500,18 @@ def query_sync(
             ),
         }
         msg = msgs.get(layer, "I'm unable to respond to that request.")
-        append_history(session_id, "user",      question)
+        append_history(session_id, "user", question)
         append_history(session_id, "assistant", msg)
         return {
-            "answer":         msg,
-            "sources":        [],
-            "session_id":     session_id,
+            "answer": msg,
+            "sources": [],
+            "session_id": session_id,
             "context_chunks": [],
-            "latency_ms":     round((time.time() - t0) * 1000, 1),
-            "mode":           "blocked",
-            "blocked":        True,
-            "block_reason":   reason,
-            "block_layer":    layer,
+            "latency_ms": round((time.time() - t0) * 1000, 1),
+            "mode": "blocked",
+            "blocked": True,
+            "block_reason": reason,
+            "block_layer": layer,
         }
 
     # 1. INPUT GUARDRAIL
@@ -474,7 +519,7 @@ def query_sync(
     if not safe:
         return _blocked(reason, "input")
 
-    # 2. ROUTE: summarisation vs. standard retrieval
+    # 2. ROUTE: summarization or standard retrieval
     summary_target = _detect_summarization_target(collection, question)
 
     if summary_target:
@@ -496,7 +541,9 @@ def query_sync(
             sources = [summary_target]
         mode = "summarize"
     else:
-        docs, metas = _retrieve(collection, question, n_results=n_results)
+        initial_docs, initial_metas = _retrieve(collection, question, n_results=RERANK_TOP_N)
+        docs, metas = _rerank_chunks(question, initial_docs, initial_metas, top_k=n_results)
+
         answer = _generate_text(
             _build_prompt(question, "\n\n".join(docs) if docs else "", history_text)
         )
@@ -508,28 +555,37 @@ def query_sync(
     if not safe:
         return _blocked(reason, "output")
 
-    # 4. SUCCESS
-    append_history(session_id, "user",      question)
+    append_history(session_id, "user", question)
     append_history(session_id, "assistant", answer)
 
+    _fire_eval_background(
+        chat_id=chat_id,
+        question=question,
+        answer=answer,
+        context_chunks=docs,
+        sources=sources,
+        latency_ms=round((time.time() - t0) * 1000, 1),
+        mode=mode
+    )
+
     return {
-        "answer":         answer,
-        "sources":        sources,
-        "session_id":     session_id,
+        "answer": answer,
+        "sources": sources,
+        "session_id": session_id,
         "context_chunks": docs,
-        "latency_ms":     round((time.time() - t0) * 1000, 1),
-        "mode":           mode,
-        "blocked":        False,
+        "latency_ms": round((time.time() - t0) * 1000, 1),
+        "mode": mode,
+        "blocked": False,
     }
 
 
-# ─────────────────────────────────────────────────────────────
-# ASYNC WRAPPERS  (used by the Telegram bot handlers)
-# ─────────────────────────────────────────────────────────────
+# =============================================================
+# ASYNC WRAPPERS
+# =============================================================
 
 async def query(
-    chat_id:    int,
-    question:   str,
+    chat_id: int,
+    question: str,
     session_id: Optional[str] = None,
 ) -> dict:
     """Non-blocking wrapper around query_sync."""
@@ -559,3 +615,207 @@ async def ingest_spaces_async(
         _executor,
         partial(ingest_from_spaces, chat_id, spaces_client, bucket, prefix),
     )
+
+
+# =============================================================
+# LOGGING & EVALUATION
+# =============================================================
+
+# Cosine similarity threshold for context precision (0-1 scale).
+EVAL_RELEVANCE_THRESHOLD = float(os.environ.get("EVAL_RELEVANCE_THRESHOLD", "0.5"))
+ 
+# Set to "false" to disable background evaluation entirely.
+EVAL_ENABLED = os.environ.get("EVAL_ENABLED", "true").strip().lower() == "true"
+ 
+_eval_logger = logging.getLogger("rag.eval")
+ 
+ 
+# Cosine similarity helper
+ 
+def _cosine_similarity(a: list, b: list) -> float:
+    """Return cosine similarity between two embedding vectors."""
+    dot  = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+ 
+ 
+# LLM as a judge helper
+ 
+_FAITHFULNESS_PROMPT = """\
+You are an evaluation judge for a Retrieval-Augmented Generation system.
+ 
+Your task: decide how well the ANSWER is grounded in the CONTEXT.
+- Score 10 if every factual claim in the answer is directly supported by the context.
+- Score 0  if the answer contains claims that are entirely absent from or contradicted by the context.
+- Use intermediate scores for partial grounding.
+ 
+CONTEXT:
+{context}
+ 
+ANSWER:
+{answer}
+ 
+Reply with exactly two lines:
+Line 1: An integer from 0 to 10.
+Line 2: One-sentence justification.
+"""
+ 
+_ANSWER_QUALITY_PROMPT = """\
+You are an evaluation judge for a university teaching assistant chatbot.
+ 
+Your task: rate how well the ANSWER addresses the QUESTION.
+- Score 10 if the answer is accurate, complete, and directly answers the question.
+- Score 0  if the answer is irrelevant, wrong, or completely fails to address the question.
+- Use intermediate scores for partial quality.
+ 
+QUESTION:
+{question}
+ 
+ANSWER:
+{answer}
+ 
+Reply with exactly two lines:
+Line 1: An integer from 0 to 10.
+Line 2: One-sentence justification.
+"""
+ 
+ 
+def _llm_score(prompt: str) -> Tuple[float, str]:
+    """
+    Call the guard/generate model as a judge.
+    Returns (normalised_score 0.0-1.0, justification).
+    Falls back to 0.5 on error so one bad call doesn't silence all evals.
+    """
+    try:
+        raw   = _ollama_client.generate(model=EVAL_MODEL, prompt=prompt)["response"].strip()
+        lines = [l.strip() for l in raw.splitlines() if l.strip()]
+        match = re.search(r"\d+", lines[0]) if lines else None
+        raw_score = int(match.group()) if match else 5
+        score = max(0, min(10, raw_score)) / 10.0
+        justification = lines[1] if len(lines) > 1 else "No justification given."
+        return score, justification
+    except Exception as exc:
+        _eval_logger.warning("LLM judge error: %s", exc)
+        return 0.5, f"Judge unavailable ({exc})"
+ 
+ 
+# Metric functions
+ 
+def eval_faithfulness(answer: str, context_chunks: List[str]) -> Tuple[float, str]:
+    """
+    LLM-as-judge: are the answer's claims grounded in the retrieved context?
+    Returns (score 0.0-1.0, justification).
+    """
+    if not context_chunks:
+        return 0.0, "No context was retrieved — answer cannot be grounded."
+    context = "\n\n".join(context_chunks)
+    return _llm_score(_FAITHFULNESS_PROMPT.format(context=context, answer=answer))
+ 
+ 
+def eval_context_precision(question: str, context_chunks: List[str]) -> float:
+    """
+    Cosine similarity: what fraction of retrieved chunks are relevant to the question?
+    Returns a score 0.0-1.0.
+    """
+    if not context_chunks:
+        return 0.0
+    try:
+        q_emb = _embed_text(question)
+    except Exception as exc:
+        _eval_logger.warning("Embedding error during context precision eval: %s", exc)
+        return 0.0
+ 
+    relevant = 0
+    for chunk in context_chunks:
+        try:
+            c_emb = _embed_text(chunk)
+            sim   = _cosine_similarity(q_emb, c_emb)
+            # ChromaDB uses L2 distance; here we use raw cosine on the
+            # same embedding model.  Threshold is configurable via env var.
+            if sim >= EVAL_RELEVANCE_THRESHOLD:
+                relevant += 1
+        except Exception as exc:
+            _eval_logger.warning("Chunk embedding error: %s", exc)
+ 
+    return relevant / len(context_chunks)
+ 
+ 
+def eval_answer_quality(question: str, answer: str) -> Tuple[float, str]:
+    """
+    LLM-as-judge: how well does the answer address the question?
+    Returns (score 0.0-1.0, justification).
+    """
+    return _llm_score(_ANSWER_QUALITY_PROMPT.format(question=question, answer=answer))
+ 
+ 
+# Evaluation
+ 
+def evaluate_and_log(
+    chat_id: int,
+    question: str,
+    answer: str,
+    context_chunks: List[str],
+    sources: List[str],
+    latency_ms: float,
+    mode: str,
+) -> None:
+    """
+    Compute all metrics and log them to the terminal.
+    Designed to be called in a background thread — never raises.
+    """
+    if not EVAL_ENABLED:
+        return
+ 
+    try:
+        faithfulness, faith_reason = eval_faithfulness(answer, context_chunks)
+        context_precision = eval_context_precision(question, context_chunks)
+        answer_quality, aq_reason = eval_answer_quality(question, answer)
+ 
+        sep = "─" * 60
+        _eval_logger.info(
+            "\n%s\n"
+            "  RAG EVALUATION  |  user=%d  mode=%s\n"
+            "%s\n"
+            "  Question         : %s\n"
+            "  Sources          : %s\n"
+            "%s\n"
+            "  Faithfulness     : %.2f  — %s\n"
+            "  Context Precision: %.2f\n"
+            "  Answer Quality   : %.2f  — %s\n"
+            "  Latency          : %.1f ms\n"
+            "%s",
+            sep,
+            chat_id, mode,
+            sep,
+            question[:120] + ("…" if len(question) > 120 else ""),
+            ", ".join(sources) if sources else "none",
+            sep,
+            faithfulness,faith_reason,
+            context_precision,
+            answer_quality,aq_reason,
+            latency_ms,
+            sep,
+        )
+    except Exception as exc:
+        _eval_logger.warning("Evaluation failed unexpectedly: %s", exc)
+ 
+ 
+def _fire_eval_background(
+    chat_id: int,
+    question: str,
+    answer: str,
+    context_chunks: List[str],
+    sources: List[str],
+    latency_ms: float,
+    mode: str,
+) -> None:
+    """Launch evaluate_and_log in a daemon thread so it never blocks the caller."""
+    t = threading.Thread(
+        target=evaluate_and_log,
+        args=(chat_id, question, answer, context_chunks, sources, latency_ms, mode),
+        daemon=True,
+    )
+    t.start()
