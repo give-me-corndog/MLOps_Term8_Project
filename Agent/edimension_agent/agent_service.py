@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import boto3
-from browser_use import ActionResult, Agent, BrowserSession, ChatGoogle, Tools
+from browser_use import ActionResult, Agent, BrowserSession, ChatGoogle, ChatOllama, Tools
 
 from .config import Settings
 from .db import TASK_STATUS_WAITING_OTP, Database
@@ -32,6 +32,23 @@ class BrowserTaskRunner:
             endpoint_url=settings.do_spaces_endpoint,
             aws_access_key_id=settings.do_spaces_key,
             aws_secret_access_key=settings.do_spaces_secret,
+        )
+
+    def _build_browser_llm(self):
+        provider = self._settings.browser_llm_provider.strip().lower()
+        if provider in {"google", "gemini", "googlechatmodel", "chatgoogle"}:
+            return ChatGoogle(
+                model=self._settings.google_model,
+                temperature=self._settings.google_temperature,
+            )
+        if provider in {"ollama", "qwen", "qwen3.5"}:
+            return ChatOllama(
+                model=self._settings.browser_ollama_model,
+                host=self._settings.browser_ollama_host,
+            )
+
+        raise ValueError(
+            "Unsupported BROWSER_LLM_PROVIDER. Use 'google' or 'ollama'."
         )
 
     @staticmethod
@@ -228,7 +245,7 @@ class BrowserTaskRunner:
         task_prompt = f"""
                 You are helping a user on eDimension. Follow this workflow:
                 1. Go to https://edimension.sutd.edu.sg/ and choose login through SUTD EASE ID.
-                2. Use secure login credentials provided to first log in.
+                2. Log in using the placeholder credentials: use `username` for the username/email field and `password` for the password field.
                 3. For MFA, use this preferred auth method: {auth_method} to key in the user's OTP and call the tool "Ask human for the OTP" to get the OTP required. Recall this tool if OTP fails, and strictly use the same auth method: {auth_method}.
                 4. Navigate to courses page at ```https://edimension.sutd.edu.sg/ultra/course``` and find by either scrolling through all the course options or searching for the full name of the course. (E.g user might say MLOps but means Machine Learning Operations)
                 5. Click the course page and when it loads, click on the Content tab to be redirected to the course-specific contents that contains directories like Assignments, Labs etc
@@ -241,7 +258,7 @@ class BrowserTaskRunner:
                 {query}
                 """.strip()
 
-        llm = ChatGoogle(model=self._settings.google_model, temperature=self._settings.google_temperature)
+        llm = self._build_browser_llm()
         browser_session = BrowserSession()
         agent = Agent(
             task=task_prompt,

@@ -3,7 +3,7 @@
 A Telegram bot for SUTD students that combines two capabilities:
 
 - **RAG Document Assistant** — ask questions about your course materials in plain text, powered by Ollama (local LLMs) and ChromaDB
-- **eDimension Browser Agent** — automate navigation on the eDimension LMS, download course files, and upload them to DigitalOcean Spaces, powered by `browser-use` and Google Gemini
+- **eDimension Browser Agent** — automate navigation on the eDimension LMS, download course files, and upload them to DigitalOcean Spaces, powered by `browser-use` with either Google Gemini or Ollama
 
 ---
 
@@ -27,7 +27,7 @@ Telegram ──► FastAPI webhook ──► bot.py
 | Bot framework | aiogram 3 |
 | Web server | FastAPI + uvicorn |
 | Browser automation | browser-use 0.12 |
-| LLM (browser agent) | Google Gemini (via `browser-use`) |
+| LLM (browser agent) | Google Gemini or Ollama (via `browser-use`) |
 | LLM (RAG) | Ollama — `ministral-3` |
 | Embeddings | Ollama — `qwen3-embedding:0.6b` |
 | Vector store | ChromaDB (persistent, per-user collections) |
@@ -41,6 +41,7 @@ Telegram ──► FastAPI webhook ──► bot.py
 ## Prerequisites
 
 - Python 3.12+
+- [uv](https://docs.astral.sh/uv/) (Python package manager and runner)
 - [Ollama](https://ollama.com) running and accessible
 - A [Telegram bot token](https://t.me/BotFather)
 - A Google Gemini API key (for the browser agent)
@@ -54,14 +55,15 @@ Telegram ──► FastAPI webhook ──► bot.py
 ```bash
 # Clone the repo and enter the project directory
 git clone <repo-url>
-cd <project-dir>
+cd <project-dir>/Agent
 
-# Install dependencies
-pip install -e .
+# Create/sync virtual environment and install dependencies from pyproject.toml
+uv sync
 
 # Pull the required Ollama models
 ollama pull ministral-3
 ollama pull qwen3-embedding:0.6b
+ollama pull qwen3.5
 ```
 
 ---
@@ -102,11 +104,13 @@ APP_ENCRYPTION_KEY=<random-key>
 SQLALCHEMY_DATABASE_URL=sqlite:///./app.db
 
 # =========================
-# Browser agent (Google Gemini)
+# Browser agent LLM (Google Gemini or Ollama)
 # =========================
+BROWSER_LLM_PROVIDER=google              # google | ollama
 GOOGLE_API_KEY=<your-google-api-key>
 GOOGLE_MODEL=gemini-2.5-flash
 GOOGLE_TEMPERATURE=0.2
+BROWSER_OLLAMA_MODEL=qwen3.5
 
 # =========================
 # DigitalOcean Spaces
@@ -161,6 +165,16 @@ EVAL_MODEL=ministral-3
 
 ## Running
 
+**If Browser Agent uses Ollama (`BROWSER_LLM_PROVIDER=ollama`):**
+
+```bash
+# One-time model download (if not already present)
+ollama pull qwen3.5
+
+# Start Ollama server
+ollama serve
+```
+
 **Development (with ngrok):**
 
 ```bash
@@ -171,8 +185,8 @@ ollama serve
 ngrok http 8000
 # Copy the https://xxxx.ngrok-free.app URL into TELEGRAM_WEBHOOK_URL in .env
 
-# Terminal 3 - start the bot (from root dir)
-python main.py
+# Terminal 3 - start the bot with autoreload (from Agent/)
+uv run uvicorn edimension_agent.app:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
 **Production:**
@@ -180,10 +194,10 @@ python main.py
 Set `TELEGRAM_WEBHOOK_URL` to your real domain, then:
 
 ```bash
-python main.py
+uv run uvicorn edimension_agent.app:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
-The server listens on `APP_HOST:APP_PORT` (default `0.0.0.0:8000`).
+The server listens on the host/port passed to uvicorn (default above: `0.0.0.0:8000`).
 
 ---
 
