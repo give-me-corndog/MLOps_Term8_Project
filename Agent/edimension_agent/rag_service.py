@@ -11,6 +11,8 @@ Key differences from the Flask-era rag.py:
   fully isolated between students.
 
 - ingest_from_spaces() pulls PDFs directly from DigitalOcean Spaces
+
+- ingest_from_spaces() pulls PDFs directly from DigitalOcean Spaces
   for a given student prefix and ingests them in one call.
 
 - All heavy I/O is run in a thread-pool so it doesn't block the
