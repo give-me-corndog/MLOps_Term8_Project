@@ -31,6 +31,17 @@ logger = logging.getLogger(__name__)
 # Maps chat_id → session_id string.
 _rag_sessions: dict[int, str] = {}
 
+# Per-chat asyncio locks — ensures only one RAG query runs at a time per user,
+# preventing race conditions on session history and parallel Ollama calls.
+_rag_locks: dict[int, asyncio.Lock] = {}
+
+
+def _get_rag_lock(chat_id: int) -> asyncio.Lock:
+    """Return (creating if needed) the per-user RAG query lock."""
+    if chat_id not in _rag_locks:
+        _rag_locks[chat_id] = asyncio.Lock()
+    return _rag_locks[chat_id]
+
 
 class TelegramAgentBot:
     def __init__(
@@ -444,33 +455,41 @@ class TelegramAgentBot:
             )
             return
 
-        await message.answer("Thinking… ⏳")
-        session_id = _rag_sessions.get(chat_id)
-
-        try:
-            result = await rag_service.query(chat_id, text, session_id=session_id)
-        except Exception as exc:
-            logger.exception("RAG query failed for chat %d", chat_id)
-            await message.answer(f"Something went wrong: {exc}")
+        lock = _get_rag_lock(chat_id)
+        if lock.locked():
+            await message.answer(
+                "⏳ Still thinking about your previous question — please wait."
+            )
             return
 
-        _rag_sessions[chat_id] = result["session_id"]
+        async with lock:
+            await message.answer("Thinking… ⏳")
+            session_id = _rag_sessions.get(chat_id)
 
-        answer  = result["answer"]
-        sources = result.get("sources", [])
-        mode    = result.get("mode", "retrieve")
+            try:
+                result = await rag_service.query(chat_id, text, session_id=session_id)
+            except Exception as exc:
+                logger.exception("RAG query failed for chat %d", chat_id)
+                await message.answer(f"Something went wrong: {exc}")
+                return
 
-        if result.get("blocked"):
-            await self._reply(message, answer)
-            return
+            _rag_sessions[chat_id] = result["session_id"]
 
-        footer = ""
-        if sources:
-            footer = "\n\n📄 Sources: " + ", ".join(sources)
-        if mode == "summarize":
-            footer += "\n_(summary mode)_"
+            answer  = result["answer"]
+            sources = result.get("sources", [])
+            mode    = result.get("mode", "retrieve")
 
-        await self._reply(message, answer + footer)
+            if result.get("blocked"):
+                await self._reply(message, answer)
+                return
+
+            footer = ""
+            if sources:
+                footer = "\n\n📄 Sources: " + ", ".join(sources)
+            if mode == "summarize":
+                footer += "\n_(summary mode)_"
+
+            await self._reply(message, answer + footer)
 
     async def _ingest_uploaded_pdf(self, message: Message) -> None:
         """Download a PDF sent directly to the chat and ingest it."""
