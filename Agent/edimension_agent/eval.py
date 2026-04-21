@@ -20,14 +20,10 @@ import os
 import re
 import time
 import uuid
-import logging
 from dataclasses import dataclass, asdict
 from typing import Optional
 
 import ollama as _ollama
-from . import lmnr_integration
-
-logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────
 # CONFIG
@@ -37,10 +33,8 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "ministral-3")
 EVAL_LOG = os.environ.get("EVAL_LOG", "eval_results.jsonl")
 EVAL_DATASET = os.environ.get("EVAL_DATASET", "eval_dataset.json")
-PUSH_TO_LAMINAR = os.environ.get("PUSH_TO_LAMINAR", "true").lower() == "true"
 
 _ollama_client = _ollama.Client(host=OLLAMA_HOST)
-_total_tokens = 0  # Track total tokens across evaluations
 
 # ─────────────────────────────────────────────────────────────
 # DATA STRUCTURES
@@ -65,8 +59,6 @@ class EvalResult:
     session_id: Optional[str] = None
     latency_ms: Optional[float] = None
     feedback: Optional[int] = None
-    token_count: Optional[int] = None  # Total tokens used for this evaluation
-    cost_usd: Optional[float] = None  # Estimated cost in USD
 
 
 # ─────────────────────────────────────────────────────────────
@@ -214,34 +206,6 @@ Respond with:
 
 
 # ─────────────────────────────────────────────────────────────
-# TOKEN COUNTING & COST TRACKING
-# ─────────────────────────────────────────────────────────────
-
-
-def _count_tokens_estimate(text: str) -> int:
-    """
-    Rough estimate of token count (1 token ≈ 4 characters for English).
-    More accurate if Ollama response includes token counts.
-    """
-    return max(1, len(text) // 4)
-
-
-_eval_token_tracker: dict[str, int] = {}
-
-
-def _track_token_count(eval_id: str, tokens: int) -> None:
-    """Track token count for an evaluation."""
-    global _total_tokens
-    _eval_token_tracker[eval_id] = _eval_token_tracker.get(eval_id, 0) + tokens
-    _total_tokens += tokens
-
-
-def _get_eval_token_count(eval_id: str) -> int:
-    """Get total tokens for an evaluation."""
-    return _eval_token_tracker.get(eval_id, 0)
-
-
-# ─────────────────────────────────────────────────────────────
 # MAIN EVALUATION ENTRY POINT
 # ─────────────────────────────────────────────────────────────
 
@@ -256,13 +220,9 @@ def evaluate(
     latency_ms: Optional[float] = None,
 ) -> EvalResult:
     context = "\n\n".join(context_chunks)
-    eval_id = str(uuid.uuid4())
-    
-    # Track token usage for this evaluation
-    _track_token_count(eval_id, _count_tokens_estimate(question + answer + context))
 
     result = EvalResult(
-        eval_id=eval_id,
+        eval_id=str(uuid.uuid4()),
         timestamp=time.time(),
         question=question,
         answer=answer,
@@ -274,21 +234,11 @@ def evaluate(
     )
 
     result.faithfulness = score_faithfulness(question, context, answer)
-    _track_token_count(eval_id, _count_tokens_estimate(context + answer))
-
     result.answer_relevancy = score_answer_relevancy(question, answer)
-    _track_token_count(eval_id, _count_tokens_estimate(question + answer))
-
     result.context_precision = score_context_precision(question, context_chunks)
-    _track_token_count(eval_id, _count_tokens_estimate(question) * len(context_chunks))
 
     if reference_answer:
         result.context_recall = score_context_recall(context, reference_answer, question)
-        _track_token_count(eval_id, _count_tokens_estimate(context + reference_answer))
-
-    # Set final token count and cost estimate (placeholder for now)
-    result.token_count = _get_eval_token_count(eval_id)
-    result.cost_usd = None  # Would be calculated based on model pricing
 
     _log_result(result)
     return result
@@ -448,22 +398,5 @@ def get_recent_evals(limit: int = 20) -> list[dict]:
 
 
 def _log_result(result: EvalResult) -> None:
-    """
-    Log evaluation result to JSONL file and optionally push to Laminar.
-    """
     with open(EVAL_LOG, "a") as f:
         f.write(json.dumps(asdict(result)) + "\n")
-
-    # Push to Laminar if enabled
-    if PUSH_TO_LAMINAR:
-        try:
-            lmnr_integration.push_eval_result(asdict(result))
-            violations = lmnr_integration.check_and_alert(
-                asdict(result),
-                question=result.question,
-                chat_id=None,  # Would need to pass chat_id from context
-            )
-            if violations:
-                logger.warning(f"Quality degradation for eval {result.eval_id}: {violations}")
-        except Exception as exc:
-            logger.warning(f"Failed to push eval result to Laminar: {exc}")
