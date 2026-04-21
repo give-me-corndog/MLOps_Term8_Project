@@ -1,13 +1,13 @@
-**Agent**
+The entire project is integrated under **Agent**
 
-**Chatbot**
+The **RAG_Chatbot** folder is for chatbot/embedding model testing
 
-to run the chatbot go to the root folder and run:
+**Models Tested**
+| Chatbot Models   | Embedding Model        |
+|------------------|------------------------|
+| Llama 3.2 (3B)   | all MiniLM L6 v2       |
+| Ministral 3 (8B) | QWen3 Embedding (0.6B) |
 
-pip install -r requirements.txt
+Current setup uses Ministral 3 and QWen3 Embedding.
 
-python RAG_Chatbot/app.py
-
-you can access the ui through localhost:5000
-
-Note: I haven't optimized anything, really just vibecoded and made the base lmao. So there might be some bugs
+Llama 3.2 was faster, but had unsatisfactory answers. all MiniLM L6 v2 was switched out because it seemed to not work so well with the chunks (I suspect it's because its context window was too small)
