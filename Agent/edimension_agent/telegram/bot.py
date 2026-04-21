@@ -497,6 +497,19 @@ class TelegramAgentBot:
         doc: Document = message.document
         fname    = doc.file_name or "upload.pdf"
 
+        # Telegram's getFile API enforces a 20 MB limit.
+        TELEGRAM_MAX_BYTES = 20 * 1024 * 1024
+        if doc.file_size and doc.file_size > TELEGRAM_MAX_BYTES:
+            size_mb = doc.file_size / (1024 * 1024)
+            await message.answer(
+                f"❌ '{fname}' is {size_mb:.1f} MB — Telegram only allows bots to "
+                f"download files up to 20 MB.\n\n"
+                f"To ingest this file, either:\n"
+                f"  • Compress or split the PDF and resend it, or\n"
+                f"  • Upload it to your eDimension course and use /ingest to pull it from Spaces."
+            )
+            return
+
         await message.answer(f"Received '{fname}'. Ingesting… ⏳")
 
         try:
