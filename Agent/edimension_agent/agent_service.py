@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 GUARDRAIL_REJECTION_MESSAGE = (
-    "I can only download files or retrieve portal metadata. "
-    "Please use the RAG function to ask questions about the document contents."
+    "I can only perform browser tasks for a specific course. "
+    "Include the course name or code, and use RAG for document-content questions."
 )
 GUARDRAIL_MODEL = "gemini-flash-lite-latest"
 
@@ -76,12 +76,16 @@ class BrowserTaskRunner:
         ALLOW only if the query is limited to:
         - web navigation on the portal
         - downloading files
-        - retrieving metadata visible on portal pages (titles, deadlines, listings)
+        - retrieving metadata visible on portal pages (titles, deadlines, listings) only
 
         REJECT if the query asks to read/summarize/extract/analyze content inside files
-        (PDFs, slides, docs, manuals, rubrics), even if it also asks to download.
+        (PDFs, slides, docs, manuals, rubrics, content), even if it also asks to download.
 
-        Reply with exactly one token: ALLOW or REJECT.
+        REJECT if the query does not specify a target course name or course code.
+
+        Output format (exactly one line):
+        - ALLOW
+        - REJECT[<short user-facing reason>]
 
         Query:
         {query}
@@ -112,8 +116,13 @@ class BrowserTaskRunner:
         if not raw:
             raw = str(response)
 
-        decision = raw.strip().upper()
-        if decision.startswith("REJECT"):
+        reject_with_reason = re.search(r"REJECT\s*\[(.*?)\]", raw, flags=re.IGNORECASE | re.DOTALL)
+        if reject_with_reason:
+            reason = reject_with_reason.group(1).strip().strip("\"'")
+            return False, reason or GUARDRAIL_REJECTION_MESSAGE
+
+        normalized = raw.strip().upper()
+        if re.search(r"\bREJECT\b", normalized):
             return False, GUARDRAIL_REJECTION_MESSAGE
         return True, ""
 
@@ -334,21 +343,6 @@ class BrowserTaskRunner:
 
         task_prompt = f"""
                 You are an agent helping a user navigate eDimension. 
-
-                CRITICAL GUARDRAIL: 
-                Before taking any action, analyze the user query. Your role is strictly limited to web navigation, downloading files, and retrieving portal metadata. If the user query asks you to read, summarize, or extract information from *inside* a document, slide, or PDF, you must IMMEDIATELY reject the request without logging in. Reply exactly with: "I can only download files or retrieve portal metadata. Please use the RAG function to ask questions about the document contents." and stop all execution. 
-
-                Examples of ALLOWED queries (Proceed to workflow):
-                - "Download the week 4 lecture slides for MLOps."
-                - "When is the deadline for Assignment 2?"
-                - "List the titles of the computer vision lab documents uploaded this week."
-                - "Check if the Week 6 notes are uploaded and save them to my S3."
-
-                Examples of REJECTED queries (Stop execution immediately):
-                - "What is the definition of a Transformer in the Week 4 slides?"
-                - "Summarize the introduction of the lab manual."
-                - "Download the physics assignment and tell me what the first question is."
-                - "Read the grading rubric from the Assignment 2 PDF."
 
                 If the query is allowed, follow this workflow:
                 1. Go to [https://edimension.sutd.edu.sg/](https://edimension.sutd.edu.sg/). Press "OK" if you see a "Privacy, cookies and terms of use" popup to expose the login page.
