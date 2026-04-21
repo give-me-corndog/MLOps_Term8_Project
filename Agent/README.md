@@ -188,6 +188,9 @@ Laminar dashboard: http://localhost:5667/
 **If Browser Agent uses Ollama (`BROWSER_LLM_PROVIDER=ollama`):**
 
 ```bash
+# One-time model download (if not already present)
+ollama pull qwen3.5
+
 # Start Ollama server
 ollama serve
 ```
@@ -202,8 +205,8 @@ ollama serve
 ngrok http 3000
 # Copy the https://xxxx.ngrok-free.app URL into TELEGRAM_WEBHOOK_URL in .env
 
-# Terminal 3 - start the bot (from Agent/)
-uv run python -m edimension_agent.server
+# Terminal 3 - start the bot with autoreload (from Agent/)
+uv run uvicorn edimension_agent.app:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
 **Production:**
@@ -211,10 +214,11 @@ uv run python -m edimension_agent.server
 Set `TELEGRAM_WEBHOOK_URL` to your real domain, then:
 
 ```bash
-uv run python -m edimension_agent.server
+uv run uvicorn edimension_agent.app:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
 The server listens on `APP_HOST` and `APP_PORT` from `.env`.
+The server listens on the host/port passed to uvicorn (default above: `0.0.0.0:8000`).
 
 ---
 
