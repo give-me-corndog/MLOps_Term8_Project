@@ -5,6 +5,11 @@ import logging
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 
+try:
+    from lmnr import Laminar
+except ImportError:
+    Laminar = None  # type: ignore[assignment]
+
 from .agent_service import BrowserTaskRunner
 from .config import Settings, load_settings
 from .crypto import CredentialCipher
@@ -13,6 +18,33 @@ from .otp_broker import OtpBroker
 from .telegram.bot import TelegramAgentBot
 
 logger = logging.getLogger(__name__)
+
+
+def _initialize_laminar(settings: Settings) -> None:
+    if not settings.lmnr_enabled:
+        logger.info("Laminar disabled (LMNR_ENABLED=false)")
+        return
+    if Laminar is None:
+        logger.warning("Laminar SDK is not installed; observability disabled")
+        return
+    if not settings.lmnr_project_api_key:
+        logger.warning("LMNR_ENABLED is true but LMNR_PROJECT_API_KEY is empty; observability disabled")
+        return
+
+    try:
+        if settings.lmnr_self_hosted and settings.lmnr_project_api_key:
+            Laminar.initialize(
+            project_api_key=settings.lmnr_project_api_key,
+            base_url="http://localhost",
+            http_port=8000,
+            grpc_port=8001,
+            )
+            logger.info("Laminar initialized with self-hosted endpoints")
+        else:
+            Laminar.initialize(project_api_key=settings.lmnr_project_api_key)
+            logger.info("Laminar initialized with Laminar Cloud endpoint")
+    except Exception as exc:
+        logger.warning("Laminar initialization failed; observability disabled: %s", exc)
 
 
 def create_app() -> FastAPI:
@@ -38,6 +70,8 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def _startup() -> None:
+        logger.info("App startup begin")
+        _initialize_laminar(settings)
         await telegram_bot.start()
         logger.info("Telegram webhook configured")
 

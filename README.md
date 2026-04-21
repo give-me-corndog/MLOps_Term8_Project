@@ -1,5 +1,13 @@
 The entire project is integrated under **Agent**
 
+Run the bot from `Agent/` with:
+
+```bash
+uv run python -m edimension_agent.server
+```
+
+This uses `APP_HOST` and `APP_PORT` from `.env`.
+
 The **RAG_Chatbot** folder was for chatbot/embedding model testing
 
 **Models Tested**
