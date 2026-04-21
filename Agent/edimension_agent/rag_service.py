@@ -229,6 +229,54 @@ def build_history_text(history: List[Dict]) -> str:
     recent = history[-MAX_HISTORY_TURNS:]
     return "\n".join(f"{m['role'].upper()}: {m['content']}" for m in recent)
 
+# =============================================================
+# HISTORY CONTEXT CONTAMINATION (prevention)
+# =============================================================
+
+_HISTORY_RELEVANCE_PROMPT = """\
+You are a conversation analyst. Decide whether the NEW QUESTION is a follow-up \
+to the CONVERSATION HISTORY, or whether it is a completely new, unrelated topic.
+ 
+A question is a follow-up if it:
+- References something mentioned in the history (e.g. "what about that course?", "and the deadline?")
+- Uses pronouns or shorthand that only make sense given the history (e.g. "it", "that one", "the same")
+- Asks for clarification or elaboration on a previous answer
+ 
+A question is unrelated if it:
+- Introduces a new subject with no connection to the history
+- Is self-contained and makes complete sense without any prior context
+ 
+CONVERSATION HISTORY:
+{history}
+ 
+NEW QUESTION:
+{question}
+ 
+Reply with exactly one word: FOLLOWUP or UNRELATED
+"""
+
+def _is_history_relevant(question: str, history: List[Dict]) -> bool:
+    """
+    Return True if the question is a follow-up to the conversation history,
+    False if it is a new unrelated topic.
+    If history is empty or the model call fails, defaults to True (use history).
+    """
+    if not history:
+        return True
+    history_text = build_history_text(history)
+    try:
+        raw = _ollama_client.generate(
+            model  = GUARD_MODEL,
+            prompt = _HISTORY_RELEVANCE_PROMPT.format(
+                history  = history_text,
+                question = question,
+            ),
+        )["response"].strip().upper()
+        # Accept any response that starts with UNRELATED
+        return not raw.startswith("UNRELATED")
+    except Exception as exc:
+        logger.warning("History relevance check failed: %s — defaulting to use history", exc)
+        return True
 
 # =============================================================
 # INGESTION
@@ -483,7 +531,13 @@ def query_sync(
 
     session_id   = get_or_create_session(session_id)
     history      = get_history(session_id)
-    history_text = build_history_text(history)
+
+    if _is_history_relevant(question, history):
+        history_text = build_history_text(history)
+    else:
+        history_text = ""
+        logger.debug("History dropped for chat %d — question is a new topic.", chat_id)
+ 
     collection   = _get_collection(chat_id)
 
     def _blocked(reason: str, layer: str) -> dict:
