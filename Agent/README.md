@@ -156,10 +156,27 @@ RERANK_TOP_N=9
 # =========================
 # Observability & Evaluation
 # =========================
-EVAL_ENABLED=true
-EVAL_MODEL=ministral-3
-
+LMNR_ENABLED=true
+LMNR_SELF_HOSTED=true
+LMNR_PROJECT_API_KEY=<your-laminar-project-api-key-generate-from-localhost-5667>
 ```
+
+---
+
+## Laminar setup (self-hosted)
+
+Before starting this application:
+
+1. Turn on Docker Desktop.
+2. Run:
+
+```bash
+git clone https://github.com/lmnr-ai/lmnr
+cd lmnr
+docker compose up -d
+```
+
+Laminar dashboard: http://localhost:5667/
 
 ---
 
@@ -168,9 +185,6 @@ EVAL_MODEL=ministral-3
 **If Browser Agent uses Ollama (`BROWSER_LLM_PROVIDER=ollama`):**
 
 ```bash
-# One-time model download (if not already present)
-ollama pull qwen3.5
-
 # Start Ollama server
 ollama serve
 ```
@@ -182,11 +196,11 @@ ollama serve
 ollama serve
 
 # Terminal 2 - expose local port
-ngrok http 8000
+ngrok http 3000
 # Copy the https://xxxx.ngrok-free.app URL into TELEGRAM_WEBHOOK_URL in .env
 
-# Terminal 3 - start the bot with autoreload (from Agent/)
-uv run uvicorn edimension_agent.app:create_app --factory --host 0.0.0.0 --port 8000
+# Terminal 3 - start the bot (from Agent/)
+uv run python -m edimension_agent.server
 ```
 
 **Production:**
@@ -194,10 +208,10 @@ uv run uvicorn edimension_agent.app:create_app --factory --host 0.0.0.0 --port 8
 Set `TELEGRAM_WEBHOOK_URL` to your real domain, then:
 
 ```bash
-uv run uvicorn edimension_agent.app:create_app --factory --host 0.0.0.0 --port 8000
+uv run python -m edimension_agent.server
 ```
 
-The server listens on the host/port passed to uvicorn (default above: `0.0.0.0:8000`).
+The server listens on `APP_HOST` and `APP_PORT` from `.env`.
 
 ---
 

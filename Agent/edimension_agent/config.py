@@ -31,6 +31,9 @@ class Settings:
 
     browser_ollama_model: str
     browser_ollama_host: str
+    lmnr_enabled: bool
+    lmnr_project_api_key: str
+    lmnr_self_hosted: bool
 
     do_spaces_key: str
     do_spaces_secret: str
@@ -89,6 +92,9 @@ def load_settings() -> Settings:
         google_temperature=float(os.getenv("GOOGLE_TEMPERATURE", "0.2")),
         browser_ollama_model=os.getenv("BROWSER_OLLAMA_MODEL", "qwen3.5").strip(),
         browser_ollama_host=os.getenv("OLLAMA_HOST", "http://localhost:11434").strip(),
+        lmnr_enabled=_parse_bool(os.getenv("LMNR_ENABLED", "false"), False),
+        lmnr_project_api_key=os.getenv("LMNR_PROJECT_API_KEY", "").strip(),
+        lmnr_self_hosted=os.getenv("LMNR_SELF_HOSTED", "true").strip(),
         do_spaces_key=os.getenv("DO_SPACES_KEY", "").strip(),
         do_spaces_secret=os.getenv("DO_SPACES_SECRET", "").strip(),
         do_spaces_region=do_spaces_region,

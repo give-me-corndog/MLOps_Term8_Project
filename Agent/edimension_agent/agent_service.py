@@ -6,6 +6,8 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+import time
+import logging
 
 import boto3
 from browser_use import ActionResult, Agent, BrowserSession, ChatGoogle, ChatOllama, Tools
@@ -13,6 +15,9 @@ from browser_use import ActionResult, Agent, BrowserSession, ChatGoogle, ChatOll
 from .config import Settings
 from .db import TASK_STATUS_WAITING_OTP, Database
 from .otp_broker import OtpBroker, OtpTimeoutError
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -244,15 +249,17 @@ class BrowserTaskRunner:
 
         task_prompt = f"""
                 You are helping a user on eDimension. Follow this workflow:
-                1. Go to https://edimension.sutd.edu.sg/ and choose login through SUTD EASE ID.
-                2. Log in using the placeholder credentials: use `username` for the username/email field and `password` for the password field.
-                3. For MFA, use this preferred auth method: {auth_method} to key in the user's OTP and call the tool "Ask human for the OTP" to get the OTP required. Recall this tool if OTP fails, and strictly use the same auth method: {auth_method}.
-                4. Navigate to courses page at ```https://edimension.sutd.edu.sg/ultra/course``` and find by either scrolling through all the course options or searching for the full name of the course. (E.g user might say MLOps but means Machine Learning Operations)
-                5. Click the course page and when it loads, click on the Content tab to be redirected to the course-specific contents that contains directories like Assignments, Labs etc
-                6. According to the user's query, click on the most appropriate directory to look for the relevant information or files. 
-                6. If the query requires file download(s), download and call the tool 'Upload the newest downloaded PDF to DigitalOcean Spaces' after each downloaded PDF.
-                7. If no file is needed, summarize findings clearly as required by the user within 5 sentences.
-                8. After successful completion, call 'Clean browser-use temporary download folders and stale staged uploads'.
+                1. Go to https://edimension.sutd.edu.sg/. Press "OK" if you see a "Privacy, cookies and terms of use" popup to expose the login page.
+                2. Click on the "SUTD EASE ID" to access the EASE login page.
+                3. On reaching EASE login page, log in using the placeholder credentials: use `username` for the username/email field and `password` for the password field. Click Login after entering credentials.
+                4. After logging, depending on the user's  {auth_method}, select the correct auth method to trigger the OTP input.
+                5. When you see a text input for OTP, call the tool "Ask human for the OTP" to get the OTP required. Recall this tool if OTP fails, and strictly use the same auth method: {auth_method}.
+                6. Navigate to courses page at ```https://edimension.sutd.edu.sg/ultra/course``` and find by either scrolling through all the course options or searching for the full name of the course. (E.g user might say MLOps but means Machine Learning Operations)
+                7. Click the course page and when it loads, click on the Content tab to be redirected to the course-specific contents that contains directories like Assignments, Labs etc
+                8. According to the user's query, click on the most appropriate directory to look for the relevant information or files. 
+                9. If the query requires file download(s), download and call the tool 'Upload the newest downloaded PDF to DigitalOcean Spaces' after each downloaded PDF.
+                10. If no file is needed, summarize findings clearly as required by the user within 5 sentences.
+                11. After successful completion, call 'Clean browser-use temporary download folders and stale staged uploads'.
 
                 User query:
                 {query}
@@ -260,20 +267,35 @@ class BrowserTaskRunner:
 
         llm = self._build_browser_llm()
         browser_session = BrowserSession()
+
         agent = Agent(
+            allowed_domains=[
+            "edimension.sutd.edu.sg",
+            "ease.sutd.edu.sg",      # SUTD EASE SSO domain
+            ],
             task=task_prompt,
             llm=llm,
             tools=tools,
             sensitive_data={"username": username, "password": password},
             browser_session=browser_session,
+            use_vision = True if self._settings.browser_llm_provider.strip().lower() in {"google", "gemini", "googlechatmodel", "chatgoogle"} else False,
+            calculate_cost=True,
         )
 
+        start = time.perf_counter()
         result = await agent.run()
-        summary = ""
+        latency = time.perf_counter() - start
+
+        ## Build summary string
+        usage_summary = await agent.token_cost_service.get_usage_summary()
+        cost_line = f"Cost: ${usage_summary.total_cost:.6f} | Latency: {latency:.2f}s"
+        summary = f"{summary}\n{cost_line}" if summary else cost_line
+        summary = summary[:500]
+
         if hasattr(result, "final_result") and callable(result.final_result):
             final = result.final_result()
             if isinstance(final, str):
-                summary = final.strip()
+                summary += final.strip()
 
         # Fallback to the most recent extracted content if final_result is empty.
         if not summary and hasattr(result, "extracted_content") and callable(result.extracted_content):
@@ -282,9 +304,6 @@ class BrowserTaskRunner:
                 last_item = extracted[-1]
                 if isinstance(last_item, str):
                     summary = last_item.strip()
-
-        if not summary:
-            summary = "Task completed with no summarized findings."
 
         # Keep Telegram responses concise.
         summary = summary[:500]
