@@ -11,6 +11,12 @@ import logging
 
 import boto3
 from browser_use import ActionResult, Agent, BrowserSession, ChatGoogle, ChatOllama, Tools
+from langchain_core.messages import HumanMessage
+
+try:
+    from lmnr import Laminar, observe
+except ImportError:
+    Laminar = None  # type: ignore[assignment]
 
 from .config import Settings
 from .db import TASK_STATUS_WAITING_OTP, Database
@@ -18,6 +24,13 @@ from .otp_broker import OtpBroker, OtpTimeoutError
 
 
 logger = logging.getLogger(__name__)
+
+
+GUARDRAIL_REJECTION_MESSAGE = (
+    "I can only download files or retrieve portal metadata. "
+    "Please use the RAG function to ask questions about the document contents."
+)
+GUARDRAIL_MODEL = "gemini-flash-lite-latest"
 
 
 @dataclass
@@ -55,6 +68,54 @@ class BrowserTaskRunner:
         raise ValueError(
             "Unsupported BROWSER_LLM_PROVIDER. Use 'google' or 'ollama'."
         )
+
+    async def _guardrail_allows_query(self, query: str) -> tuple[bool, str]:
+        guardrail_prompt = f"""
+        You are a strict request classifier for an LMS browser automation agent.
+
+        ALLOW only if the query is limited to:
+        - web navigation on the portal
+        - downloading files
+        - retrieving metadata visible on portal pages (titles, deadlines, listings)
+
+        REJECT if the query asks to read/summarize/extract/analyze content inside files
+        (PDFs, slides, docs, manuals, rubrics), even if it also asks to download.
+
+        Reply with exactly one token: ALLOW or REJECT.
+
+        Query:
+        {query}
+        """.strip()
+
+        try:
+            guard_model = ChatGoogle(model=GUARDRAIL_MODEL, temperature=0.0)
+            response = await guard_model.ainvoke([HumanMessage(content=guardrail_prompt)])
+        except Exception as exc:
+            logger.warning("Guardrail model check failed; defaulting to ALLOW: %s", exc)
+            return True, ""
+
+        raw = ""
+        if isinstance(response, str):
+            raw = response
+        elif hasattr(response, "content"):
+            content = getattr(response, "content")
+            if isinstance(content, str):
+                raw = content
+            elif isinstance(content, list):
+                parts: list[str] = []
+                for item in content:
+                    if isinstance(item, str):
+                        parts.append(item)
+                    elif isinstance(item, dict) and "text" in item:
+                        parts.append(str(item.get("text", "")))
+                raw = " ".join(parts)
+        if not raw:
+            raw = str(response)
+
+        decision = raw.strip().upper()
+        if decision.startswith("REJECT"):
+            return False, GUARDRAIL_REJECTION_MESSAGE
+        return True, ""
 
     @staticmethod
     def sanitize_key_part(value: str) -> str:
@@ -173,6 +234,7 @@ class BrowserTaskRunner:
 
         return cleaned
 
+    @observe()
     async def run_task(
         self,
         task_id: str,
@@ -182,6 +244,27 @@ class BrowserTaskRunner:
         password: str,
         auth_method: str,
     ) -> AgentRunResult:
+        allowed, rejection_message = await self._guardrail_allows_query(query)
+        logger.info(
+            "Guardrail verdict task_id=%s chat_id=%s verdict=%s",
+            task_id,
+            chat_id,
+            "ALLOW" if allowed else "REJECT",
+        )
+        if not allowed:
+            logger.info(
+                "Guardrail rejection task_id=%s reason=%s",
+                task_id,
+                rejection_message,
+            )
+            return AgentRunResult(summary=rejection_message, uploaded_files=[])
+
+        
+        # Logging
+        Laminar.set_trace_user_id(chat_id)
+        Laminar.set_trace_session_id(task_id)
+        Laminar.set_trace_metadata({"query": query, "auth_method": auth_method})
+
         self._settings.downloads_dir.mkdir(parents=True, exist_ok=True)
 
         tools = Tools()
@@ -247,18 +330,37 @@ class BrowserTaskRunner:
             cleanup_result = self.cleanup_temp_and_staging(current_task_id=task_id)
             return ActionResult(extracted_content=json.dumps(cleanup_result), include_in_memory=True)
 
+        
+
         task_prompt = f"""
-                You are helping a user on eDimension. Follow this workflow:
-                1. Go to https://edimension.sutd.edu.sg/. Press "OK" if you see a "Privacy, cookies and terms of use" popup to expose the login page.
+                You are an agent helping a user navigate eDimension. 
+
+                CRITICAL GUARDRAIL: 
+                Before taking any action, analyze the user query. Your role is strictly limited to web navigation, downloading files, and retrieving portal metadata. If the user query asks you to read, summarize, or extract information from *inside* a document, slide, or PDF, you must IMMEDIATELY reject the request without logging in. Reply exactly with: "I can only download files or retrieve portal metadata. Please use the RAG function to ask questions about the document contents." and stop all execution. 
+
+                Examples of ALLOWED queries (Proceed to workflow):
+                - "Download the week 4 lecture slides for MLOps."
+                - "When is the deadline for Assignment 2?"
+                - "List the titles of the computer vision lab documents uploaded this week."
+                - "Check if the Week 6 notes are uploaded and save them to my S3."
+
+                Examples of REJECTED queries (Stop execution immediately):
+                - "What is the definition of a Transformer in the Week 4 slides?"
+                - "Summarize the introduction of the lab manual."
+                - "Download the physics assignment and tell me what the first question is."
+                - "Read the grading rubric from the Assignment 2 PDF."
+
+                If the query is allowed, follow this workflow:
+                1. Go to [https://edimension.sutd.edu.sg/](https://edimension.sutd.edu.sg/). Press "OK" if you see a "Privacy, cookies and terms of use" popup to expose the login page.
                 2. Click on the "SUTD EASE ID" to access the EASE login page.
                 3. On reaching EASE login page, log in using the placeholder credentials: use `username` for the username/email field and `password` for the password field. Click Login after entering credentials.
-                4. After logging, depending on the user's  {auth_method}, select the correct auth method to trigger the OTP input.
+                4. After logging, depending on the user's {auth_method}, select the correct auth method to trigger the OTP input.
                 5. When you see a text input for OTP, call the tool "Ask human for the OTP" to get the OTP required. Recall this tool if OTP fails, and strictly use the same auth method: {auth_method}.
                 6. Navigate to courses page at ```https://edimension.sutd.edu.sg/ultra/course``` and find by either scrolling through all the course options or searching for the full name of the course. (E.g user might say MLOps but means Machine Learning Operations)
                 7. Click the course page and when it loads, click on the Content tab to be redirected to the course-specific contents that contains directories like Assignments, Labs etc
                 8. According to the user's query, click on the most appropriate directory to look for the relevant information or files. 
                 9. If the query requires file download(s), download and call the tool 'Upload the newest downloaded PDF to DigitalOcean Spaces' after each downloaded PDF.
-                10. If no file is needed, summarize findings clearly as required by the user within 5 sentences.
+                10. If the query asks for information visible directly on the eDimension portal UI (such as assignment deadlines, listing of lab topics, or listing of lecture topics), summarize those findings clearly. DO NOT open or read the actual files/PDFs to gather this information.
                 11. After successful completion, call 'Clean browser-use temporary download folders and stale staged uploads'.
 
                 User query:
@@ -267,7 +369,6 @@ class BrowserTaskRunner:
 
         llm = self._build_browser_llm()
         browser_session = BrowserSession()
-
         agent = Agent(
             allowed_domains=[
             "edimension.sutd.edu.sg",
@@ -282,16 +383,17 @@ class BrowserTaskRunner:
             calculate_cost=True,
         )
 
-        start = time.perf_counter()
+        # start = time.perf_counter()
         result = await agent.run()
-        latency = time.perf_counter() - start
+        # latency = time.perf_counter() - start
 
-        ## Build summary string
-        usage_summary = await agent.token_cost_service.get_usage_summary()
-        cost_line = f"Cost: ${usage_summary.total_cost:.6f} | Latency: {latency:.2f}s"
-        summary = f"{summary}\n{cost_line}" if summary else cost_line
-        summary = summary[:500]
+        # ## Build summary string
+        # usage_summary = await agent.token_cost_service.get_usage_summary()
+        # cost_line = f"Cost: ${usage_summary.total_cost:.6f} | Latency: {latency:.2f}s"
+        # summary = f"{cost_line}" if summary else cost_line
+        # summary = summary[:500]
 
+        summary = ""
         if hasattr(result, "final_result") and callable(result.final_result):
             final = result.final_result()
             if isinstance(final, str):
