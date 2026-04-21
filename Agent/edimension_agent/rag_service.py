@@ -64,7 +64,11 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST","http://localhost:11434")
 EMBED_MODEL = os.environ.get("RAG_EMBED_MODEL","qwen3-embedding:0.6b")
 GENERATE_MODEL = os.environ.get("RAG_GENERATE_MODEL","ministral-3")
 GUARD_MODEL = os.environ.get("RAG_GUARD_MODEL","ministral-3")
+<<<<<<< HEAD
 EVAL_MODEL = os.environ.get("EVAL_MODEL", "mistral-large-3:675b-cloud")
+=======
+EVAL_MODEL = os.environ.get("EVAL_MODEL","ministral-3") #os.environ.get("EVAL_MODEL","mistral-large-3:675b-cloud")
+>>>>>>> 4229a8a (RAG Eval in place; Fixed RAG retrieving wrong chunk)
 
 CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE","800"))
 CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP","300"))
@@ -235,6 +239,7 @@ def build_history_text(history: List[Dict]) -> str:
 # HISTORY CONTEXT CONTAMINATION (prevention)
 # =============================================================
 
+<<<<<<< HEAD
 _HISTORY_RELEVANCE_PROMPT = """\
 You are a conversation analyst. Decide whether the NEW QUESTION is a follow-up to the CONVERSATION HISTORY or a completely new, unrelated topic.
 
@@ -279,6 +284,8 @@ def _is_history_relevant(question: str, history: List[Dict]) -> bool:
         logger.warning("History relevance check failed: %s — defaulting to use history", exc)
         return True
 
+=======
+>>>>>>> 4229a8a (RAG Eval in place; Fixed RAG retrieving wrong chunk)
 # =============================================================
 # INGESTION
 # =============================================================
@@ -746,18 +753,26 @@ Line 2: One-sentence justification.
  
 def _llm_score(prompt: str) -> Tuple[float, str]:
     """
+<<<<<<< HEAD
     Call EVAL_MODEL as a judge using the chat interface.
     Uses chat() instead of generate() because mistral-large-3:675b-cloud
     is a cloud-routed model that requires the messages format.
+=======
+    Call the guard/generate model as a judge.
+>>>>>>> 4229a8a (RAG Eval in place; Fixed RAG retrieving wrong chunk)
     Returns (normalised_score 0.0-1.0, justification).
     Falls back to 0.5 on error so one bad call doesn't silence all evals.
     """
     try:
+<<<<<<< HEAD
         response = _ollama_client.chat(
             model    = EVAL_MODEL,
             messages = [{"role": "user", "content": prompt}],
         )
         raw   = response.message.content.strip()
+=======
+        raw   = _ollama_client.generate(model=EVAL_MODEL, prompt=prompt)["response"].strip()
+>>>>>>> 4229a8a (RAG Eval in place; Fixed RAG retrieving wrong chunk)
         lines = [l.strip() for l in raw.splitlines() if l.strip()]
         match = re.search(r"\d+", lines[0]) if lines else None
         raw_score = int(match.group()) if match else 5
@@ -800,7 +815,12 @@ def eval_context_precision(question: str, context_chunks: List[str]) -> float:
         try:
             c_emb = _embed_text(chunk)
             sim   = _cosine_similarity(q_emb, c_emb)
+<<<<<<< HEAD
             #Threshold is configurable via env var.
+=======
+            # ChromaDB uses L2 distance; here we use raw cosine on the
+            # same embedding model.  Threshold is configurable via env var.
+>>>>>>> 4229a8a (RAG Eval in place; Fixed RAG retrieving wrong chunk)
             if sim >= EVAL_RELEVANCE_THRESHOLD:
                 relevant += 1
         except Exception as exc:
