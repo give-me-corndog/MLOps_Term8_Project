@@ -65,7 +65,7 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST","http://localhost:11434")
 EMBED_MODEL = os.environ.get("RAG_EMBED_MODEL","qwen3-embedding:0.6b")
 GENERATE_MODEL = os.environ.get("RAG_GENERATE_MODEL","ministral-3")
 GUARD_MODEL = os.environ.get("RAG_GUARD_MODEL","ministral-3")
-EVAL_MODEL = os.environ.get("EVAL_MODEL","ministral-3") #os.environ.get("EVAL_MODEL","mistral-large-3:675b-cloud")
+EVAL_MODEL = os.environ.get("EVAL_MODEL", "mistral-large-3:675b-cloud")
 
 CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE","800"))
 CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP","300"))
@@ -739,12 +739,18 @@ Line 2: One-sentence justification.
  
 def _llm_score(prompt: str) -> Tuple[float, str]:
     """
-    Call the guard/generate model as a judge.
+    Call EVAL_MODEL as a judge using the chat interface.
+    Uses chat() instead of generate() because mistral-large-3:675b-cloud
+    is a cloud-routed model that requires the messages format.
     Returns (normalised_score 0.0-1.0, justification).
     Falls back to 0.5 on error so one bad call doesn't silence all evals.
     """
     try:
-        raw   = _ollama_client.generate(model=EVAL_MODEL, prompt=prompt)["response"].strip()
+        response = _ollama_client.chat(
+            model    = EVAL_MODEL,
+            messages = [{"role": "user", "content": prompt}],
+        )
+        raw   = response.message.content.strip()
         lines = [l.strip() for l in raw.splitlines() if l.strip()]
         match = re.search(r"\d+", lines[0]) if lines else None
         raw_score = int(match.group()) if match else 5
@@ -787,8 +793,7 @@ def eval_context_precision(question: str, context_chunks: List[str]) -> float:
         try:
             c_emb = _embed_text(chunk)
             sim   = _cosine_similarity(q_emb, c_emb)
-            # ChromaDB uses L2 distance; here we use raw cosine on the
-            # same embedding model.  Threshold is configurable via env var.
+            #Threshold is configurable via env var.
             if sim >= EVAL_RELEVANCE_THRESHOLD:
                 relevant += 1
         except Exception as exc:

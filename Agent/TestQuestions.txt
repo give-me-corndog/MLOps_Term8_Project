@@ -26,9 +26,9 @@ RAG Performance Tests:
 5. According to MLOps lecture slides, what is the first thing an organization needs to do when planning to use machine learning?
 6. What is the first thing an organization needs to do when planning to use machine learning? (same as previous question but without hint)
 7. What are the techniques of prompt engineering?
-8. Are LLMs known to be good at maths?
+8. Are language models known to be innately good at maths?
 9. Is Llama 3.2 a foundational model?
-10. Why are LLMs known to be good at maths? (should correct me)
+10. Why are language models known to be innately good at maths? (should correct me)
 
 Summarization Tests:
 1. Summarize Course Handout -- MLOps Concepts 2026.pdf
