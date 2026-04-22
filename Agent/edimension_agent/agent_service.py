@@ -35,6 +35,7 @@ GUARDRAIL_REJECTION_MESSAGE = (
 GUARDRAIL_MODEL = "gemini-2.5-flash-lite"
 BROWSER_LLM_MODEL = "gemini-3-flash-preview" #gemini-3-flash-preview/ministral-3/qwen3.5
 BROWSER_PROFILE = BrowserProfile(
+<<<<<<< HEAD
     allowed_domains=['ease.sutd.edu.sg', 'edimension.sutd.edu.sg', 'docs.google.com', 'learn-ap-southeast-1-prod-fleet02-xythos.content.blackboardcdn.com'],
 )
 ALLOWED_DOMAINS = tuple(BROWSER_PROFILE.allowed_domains or [])
@@ -47,6 +48,14 @@ Speed optimization instructions:
 """ # From the Browser Use documentation 
 # LOGGING PARAMS
 MODE = "agent"
+=======
+    minimum_wait_page_load_time=0.1,
+	wait_between_actions=0.1,
+    allowed_domains=['ease.sutd.edu.sg', 'edimension.sutd.edu.sg', 'docs.google.com'],
+)
+ALLOWED_DOMAINS = tuple(BROWSER_PROFILE.allowed_domains or [])
+MAX_STEPS = 30
+>>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
 
 
 @dataclass
@@ -80,6 +89,10 @@ class BrowserTaskRunner:
 
     async def _guardrail_allows_query(self, query: str, task_id: str, chat_id: int) -> tuple[bool, str]:
         # Logging
+<<<<<<< HEAD
+=======
+        Laminar.set_trace_user_id(str(chat_id))
+>>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
         Laminar.set_trace_session_id(task_id)
 
         guardrail_prompt = f"""
@@ -185,9 +198,15 @@ class BrowserTaskRunner:
             # "action_results": BrowserTaskRunner._serialize_log_value(call_method("action_results")),
             "action_history": BrowserTaskRunner._serialize_log_value(call_method("action_history")),
             # "number_of_steps": BrowserTaskRunner._serialize_log_value(call_method("number_of_steps")),
+<<<<<<< HEAD
             "total_duration_seconds": BrowserTaskRunner._serialize_log_value(
                 call_method("total_duration_seconds")
             ),
+=======
+            # "total_duration_seconds": BrowserTaskRunner._serialize_log_value(
+            #     call_method("total_duration_seconds")
+            # ),
+>>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
         }
 
     @staticmethod
@@ -372,6 +391,10 @@ class BrowserTaskRunner:
 
         
         # Logging
+<<<<<<< HEAD
+=======
+        Laminar.set_trace_user_id(str(chat_id))
+>>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
         Laminar.set_trace_session_id(task_id)
         Laminar.set_trace_metadata({"live": live, "agent": True})
 
@@ -462,10 +485,16 @@ class BrowserTaskRunner:
                 1. Navigate to courses page at ```https://edimension.sutd.edu.sg/ultra/course``` and find by either scrolling through all the course options or searching for the full name of the course. (E.g user might say MLOps but means Machine Learning Operations)
                 2. Click the course page and when it loads, click on the Content tab to be redirected to the course-specific contents that contains directories like Assignments, Labs etc
                 3. According to the user's query, click on the most appropriate directory to look for the relevant information or files. It may not be named exactly such as Syllabus being called Course Handout.
+<<<<<<< HEAD
                 4. If the query only requests for the course page, and you have navigated to the course page, then this is a successful completion.
                 5. If the query requires file download, download the file and call the tool 'Upload the newest downloaded PDF to DigitalOcean Spaces' after each downloaded PDF. Be sure to close the tab after you are done downloading to prevent any unexpected stalling errors. Do not continue looking for more files once downloaded.
                 6. If the query asks for information visible directly on the eDimension portal UI (such as assignment deadlines, listing of lab topics, or listing of lecture topics), summarize those findings clearly. DO NOT open or read the actual files/PDFs to gather this information.
                 7. After successful completion, call 'Clean browser-use temporary download folders and stale staged uploads'.
+=======
+                4. If the query requires file download(s), download and call the tool 'Upload the newest downloaded PDF to DigitalOcean Spaces' after each downloaded PDF.
+                5. If the query asks for information visible directly on the eDimension portal UI (such as assignment deadlines, listing of lab topics, or listing of lecture topics), summarize those findings clearly. DO NOT open or read the actual files/PDFs to gather this information.
+                6. After successful completion, call 'Clean browser-use temporary download folders and stale staged uploads'.
+>>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
 
                 User query:
                 {query}
@@ -511,7 +540,11 @@ class BrowserTaskRunner:
             # latency = time.perf_counter() - start
 
             # ## Build summary string
+<<<<<<< HEAD
             usage_summary = await agent.token_cost_service.get_usage_summary()
+=======
+            # usage_summary = await agent.token_cost_service.get_usage_summary()
+>>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
             # cost_line = f"Cost: ${usage_summary.total_cost:.6f} | Latency: {latency:.2f}s"
             # summary = f"{cost_line}" if summary else cost_line
             # summary = summary[:500]
@@ -520,11 +553,19 @@ class BrowserTaskRunner:
                 final = result.final_result()
                 if isinstance(final, str):
                     summary += final.strip()
+<<<<<<< HEAD
             
+=======
+
+            # Fallback to the most recent extracted content if final_result is empty.
+            
+
+>>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
             # Keep Telegram responses concise.
             summary = summary[:500]
 
             logs = self._collect_agent_logs(result)
+<<<<<<< HEAD
             logs["total_cost"] = usage_summary.total_cost
             if offsite_violation is not None:
                 logs["offsite_violation"] = offsite_violation   
@@ -541,6 +582,10 @@ class BrowserTaskRunner:
                     Laminar.set_trace_user_id(f"{MODE}:live:success")
                 if not live:
                     Laminar.set_trace_user_id(f"{MODE}:eval:success")
+=======
+            if offsite_violation is not None:
+                logs["offsite_violation"] = offsite_violation
+>>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
 
             return AgentRunResult(
                 summary=summary,
