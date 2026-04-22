@@ -8,9 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 import time
 import logging
+from typing import Any
+from urllib.parse import urlparse
 
 import boto3
-from browser_use import ActionResult, Agent, BrowserSession, ChatGoogle, ChatOllama, Tools
+from browser_use import ActionResult, Agent, BrowserSession, ChatGoogle, ChatOllama, Tools, BrowserProfile
 from langchain_core.messages import HumanMessage
 
 try:
@@ -30,13 +32,22 @@ GUARDRAIL_REJECTION_MESSAGE = (
     "I can only perform browser tasks for a specific course. "
     "Include the course name or code, and use RAG for document-content questions."
 )
-GUARDRAIL_MODEL = "gemini-flash-lite-latest"
+GUARDRAIL_MODEL = "gemini-2.5-flash-lite"
+BROWSER_LLM_MODEL = "gemini-3-flash-preview" #gemini-3-flash-preview/ministral-3/qwen3.5
+BROWSER_PROFILE = BrowserProfile(
+    minimum_wait_page_load_time=0.1,
+	wait_between_actions=0.1,
+    allowed_domains=['ease.sutd.edu.sg', 'edimension.sutd.edu.sg', 'docs.google.com'],
+)
+ALLOWED_DOMAINS = tuple(BROWSER_PROFILE.allowed_domains or [])
+MAX_STEPS = 30
 
 
 @dataclass
 class AgentRunResult:
     summary: str
     uploaded_files: list[dict]
+    logs: dict[str, Any]
 
 
 class BrowserTaskRunner:
@@ -53,23 +64,19 @@ class BrowserTaskRunner:
         )
 
     def _build_browser_llm(self):
-        provider = self._settings.browser_llm_provider.strip().lower()
-        if provider in {"google", "gemini", "googlechatmodel", "chatgoogle"}:
+        model = BROWSER_LLM_MODEL.strip()
+        if model.lower().startswith("gemini"):
             return ChatGoogle(
-                model=self._settings.google_model,
+                model=model,
                 temperature=self._settings.google_temperature,
             )
-        if provider in {"ollama", "qwen", "qwen3.5"}:
-            return ChatOllama(
-                model=self._settings.browser_ollama_model,
-                host=self._settings.browser_ollama_host,
-            )
+        return ChatOllama(model=model, host=self._settings.browser_ollama_host)
 
-        raise ValueError(
-            "Unsupported BROWSER_LLM_PROVIDER. Use 'google' or 'ollama'."
-        )
+    async def _guardrail_allows_query(self, query: str, task_id: str, chat_id: int) -> tuple[bool, str]:
+        # Logging
+        Laminar.set_trace_user_id(str(chat_id))
+        Laminar.set_trace_session_id(task_id)
 
-    async def _guardrail_allows_query(self, query: str) -> tuple[bool, str]:
         guardrail_prompt = f"""
         You are a strict request classifier for an LMS browser automation agent.
 
@@ -125,6 +132,73 @@ class BrowserTaskRunner:
         if re.search(r"\bREJECT\b", normalized):
             return False, GUARDRAIL_REJECTION_MESSAGE
         return True, ""
+
+    @staticmethod
+    def _serialize_log_value(value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, dict):
+            return {str(k): BrowserTaskRunner._serialize_log_value(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [BrowserTaskRunner._serialize_log_value(v) for v in value]
+        if hasattr(value, "model_dump") and callable(value.model_dump):
+            try:
+                return BrowserTaskRunner._serialize_log_value(value.model_dump())
+            except Exception:
+                return str(value)
+        if hasattr(value, "dict") and callable(value.dict):
+            try:
+                return BrowserTaskRunner._serialize_log_value(value.dict())
+            except Exception:
+                return str(value)
+        if hasattr(value, "__dict__"):
+            try:
+                return BrowserTaskRunner._serialize_log_value(vars(value))
+            except Exception:
+                return str(value)
+        return str(value)
+
+    @staticmethod
+    def _collect_agent_logs(result: Any) -> dict[str, Any]:
+        def call_method(name: str) -> Any:
+            method = getattr(result, name, None)
+            if callable(method):
+                try:
+                    return method()
+                except Exception as exc:
+                    return f"error calling {name}: {exc}"
+            return None
+
+        return {
+            "final_result": BrowserTaskRunner._serialize_log_value(call_method("final_result")),
+            "is_done": BrowserTaskRunner._serialize_log_value(call_method("is_done")),
+            "is_successful": BrowserTaskRunner._serialize_log_value(call_method("is_successful")),
+            "has_errors": BrowserTaskRunner._serialize_log_value(call_method("has_errors")),
+            # "model_thoughts": BrowserTaskRunner._serialize_log_value(call_method("model_thoughts")),
+            # "action_results": BrowserTaskRunner._serialize_log_value(call_method("action_results")),
+            "action_history": BrowserTaskRunner._serialize_log_value(call_method("action_history")),
+            # "number_of_steps": BrowserTaskRunner._serialize_log_value(call_method("number_of_steps")),
+            # "total_duration_seconds": BrowserTaskRunner._serialize_log_value(
+            #     call_method("total_duration_seconds")
+            # ),
+        }
+
+    @staticmethod
+    def _is_allowed_url(url: str, allowed_domains: tuple[str, ...]) -> bool:
+        if not url:
+            return False
+        normalized_url = url.strip().lower()
+        if normalized_url == "about:blank":
+            # Browser sessions often start on about:blank before first navigation.
+            return True
+
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return False
+        return any(host == domain or host.endswith(f".{domain}") for domain in allowed_domains)
 
     @staticmethod
     def sanitize_key_part(value: str) -> str:
@@ -252,32 +326,58 @@ class BrowserTaskRunner:
         username: str,
         password: str,
         auth_method: str,
+        browser_profile: BrowserProfile = BROWSER_PROFILE,
+        browser_session: BrowserSession | None = None,
+        close_browser_session: bool = True,
+        bypass_guardrails: bool = False,
+        live: bool = True
     ) -> AgentRunResult:
-        allowed, rejection_message = await self._guardrail_allows_query(query)
-        logger.info(
-            "Guardrail verdict task_id=%s chat_id=%s verdict=%s",
-            task_id,
-            chat_id,
-            "ALLOW" if allowed else "REJECT",
-        )
-        if not allowed:
+        if bypass_guardrails:
+            logger.warning("Guardrails bypassed for task_id=%s chat_id=%s", task_id, chat_id)
+        else:
+            allowed, rejection_message = await self._guardrail_allows_query(query, task_id, chat_id)
             logger.info(
-                "Guardrail rejection task_id=%s reason=%s",
+                "Guardrail verdict task_id=%s chat_id=%s verdict=%s",
                 task_id,
-                rejection_message,
+                chat_id,
+                "ALLOW" if allowed else "REJECT",
             )
-            return AgentRunResult(summary=rejection_message, uploaded_files=[])
+            if not allowed:
+                logger.info(
+                    "Guardrail rejection task_id=%s reason=%s",
+                    task_id,
+                    rejection_message,
+                )
+                return AgentRunResult(
+                    summary=rejection_message,
+                    uploaded_files=[],
+                    logs={
+                        "final_result": rejection_message,
+                        "is_done": True,
+                        "is_successful": False,
+                        "has_errors": False,
+                        "model_thoughts": [],
+                        "action_results": [],
+                        "action_history": [],
+                        "number_of_steps": 0,
+                        "total_duration_seconds": 0,
+                        "guardrail_rejected": True,
+                    },
+                )
 
         
         # Logging
-        Laminar.set_trace_user_id(chat_id)
+        Laminar.set_trace_user_id(str(chat_id))
         Laminar.set_trace_session_id(task_id)
-        Laminar.set_trace_metadata({"query": query, "auth_method": auth_method})
+        Laminar.set_trace_metadata({"live": live, "agent": True})
 
         self._settings.downloads_dir.mkdir(parents=True, exist_ok=True)
 
         tools = Tools()
         uploaded_files: list[dict] = []
+        summary = "" # As response to Telegram bot
+        offsite_violation: dict[str, Any] | None = None
+
 
         @tools.action(description="Ask human for the OTP")
         async def ask_human_for_otp(question: str) -> ActionResult:
@@ -345,63 +445,94 @@ class BrowserTaskRunner:
                 You are an agent helping a user navigate eDimension. 
 
                 If the query is allowed, follow this workflow:
-                1. Go to [https://edimension.sutd.edu.sg/](https://edimension.sutd.edu.sg/). Press "OK" if you see a "Privacy, cookies and terms of use" popup to expose the login page.
+                1. FIRST ACTION (mandatory): navigate to https://edimension.sutd.edu.sg/ and wait for page load, even if already logged in or currently on another page.
+
+                If you are not logged in:
+                1. Press "OK" if you see a "Privacy, cookies and terms of use" popup to expose the login page.
                 2. Click on the "SUTD EASE ID" to access the EASE login page.
                 3. On reaching EASE login page, log in using the placeholder credentials: use `username` for the username/email field and `password` for the password field. Click Login after entering credentials.
                 4. After logging, depending on the user's {auth_method}, select the correct auth method to trigger the OTP input.
                 5. When you see a text input for OTP, call the tool "Ask human for the OTP" to get the OTP required. Recall this tool if OTP fails, and strictly use the same auth method: {auth_method}.
-                6. Navigate to courses page at ```https://edimension.sutd.edu.sg/ultra/course``` and find by either scrolling through all the course options or searching for the full name of the course. (E.g user might say MLOps but means Machine Learning Operations)
-                7. Click the course page and when it loads, click on the Content tab to be redirected to the course-specific contents that contains directories like Assignments, Labs etc
-                8. According to the user's query, click on the most appropriate directory to look for the relevant information or files. 
-                9. If the query requires file download(s), download and call the tool 'Upload the newest downloaded PDF to DigitalOcean Spaces' after each downloaded PDF.
-                10. If the query asks for information visible directly on the eDimension portal UI (such as assignment deadlines, listing of lab topics, or listing of lecture topics), summarize those findings clearly. DO NOT open or read the actual files/PDFs to gather this information.
-                11. After successful completion, call 'Clean browser-use temporary download folders and stale staged uploads'.
+
+                At this point, if you are already logged in:
+                1. Navigate to courses page at ```https://edimension.sutd.edu.sg/ultra/course``` and find by either scrolling through all the course options or searching for the full name of the course. (E.g user might say MLOps but means Machine Learning Operations)
+                2. Click the course page and when it loads, click on the Content tab to be redirected to the course-specific contents that contains directories like Assignments, Labs etc
+                3. According to the user's query, click on the most appropriate directory to look for the relevant information or files. It may not be named exactly such as Syllabus being called Course Handout.
+                4. If the query requires file download(s), download and call the tool 'Upload the newest downloaded PDF to DigitalOcean Spaces' after each downloaded PDF.
+                5. If the query asks for information visible directly on the eDimension portal UI (such as assignment deadlines, listing of lab topics, or listing of lecture topics), summarize those findings clearly. DO NOT open or read the actual files/PDFs to gather this information.
+                6. After successful completion, call 'Clean browser-use temporary download folders and stale staged uploads'.
 
                 User query:
                 {query}
                 """.strip()
 
         llm = self._build_browser_llm()
-        browser_session = BrowserSession()
+        if browser_session is None:
+            browser_session = BrowserSession()
         agent = Agent(
-            allowed_domains=[
-            "edimension.sutd.edu.sg",
-            "ease.sutd.edu.sg",      # SUTD EASE SSO domain
-            ],
             task=task_prompt,
             llm=llm,
             tools=tools,
+            browser_profile=browser_profile,
             sensitive_data={"username": username, "password": password},
             browser_session=browser_session,
             use_vision = True if self._settings.browser_llm_provider.strip().lower() in {"google", "gemini", "googlechatmodel", "chatgoogle"} else False,
             calculate_cost=True,
         )
 
-        # start = time.perf_counter()
-        result = await agent.run()
-        # latency = time.perf_counter() - start
+        # Defined callbacks per step
+        async def fail_on_offsite(current_agent: Agent) -> None:
+            nonlocal offsite_violation
+            try:
+                url = await current_agent.browser_session.get_current_page_url()
+            except Exception as exc:
+                logger.warning("Offsite check failed to read URL: %s", exc)
+                return
 
-        # ## Build summary string
-        # usage_summary = await agent.token_cost_service.get_usage_summary()
-        # cost_line = f"Cost: ${usage_summary.total_cost:.6f} | Latency: {latency:.2f}s"
-        # summary = f"{cost_line}" if summary else cost_line
-        # summary = summary[:500]
+            if self._is_allowed_url(url, ALLOWED_DOMAINS):
+                return
 
-        summary = ""
-        if hasattr(result, "final_result") and callable(result.final_result):
-            final = result.final_result()
-            if isinstance(final, str):
-                summary += final.strip()
+            offsite_violation = {
+                "allowed_domains": list(ALLOWED_DOMAINS),
+                "offsite_url": url,
+            }
+            logger.error("Offsite navigation blocked task_id=%s url=%s", task_id, url)
+            current_agent.stop()
 
-        # Fallback to the most recent extracted content if final_result is empty.
-        if not summary and hasattr(result, "extracted_content") and callable(result.extracted_content):
-            extracted = result.extracted_content()
-            if isinstance(extracted, list) and extracted:
-                last_item = extracted[-1]
-                if isinstance(last_item, str):
-                    summary = last_item.strip()
+        try:
+            # start = time.perf_counter()
+            result = await agent.run(on_step_start=fail_on_offsite, max_steps = MAX_STEPS)
+            # latency = time.perf_counter() - start
 
-        # Keep Telegram responses concise.
-        summary = summary[:500]
+            # ## Build summary string
+            # usage_summary = await agent.token_cost_service.get_usage_summary()
+            # cost_line = f"Cost: ${usage_summary.total_cost:.6f} | Latency: {latency:.2f}s"
+            # summary = f"{cost_line}" if summary else cost_line
+            # summary = summary[:500]
 
-        return AgentRunResult(summary=summary, uploaded_files=uploaded_files)
+            if hasattr(result, "final_result") and callable(result.final_result):
+                final = result.final_result()
+                if isinstance(final, str):
+                    summary += final.strip()
+
+            # Fallback to the most recent extracted content if final_result is empty.
+            
+
+            # Keep Telegram responses concise.
+            summary = summary[:500]
+
+            logs = self._collect_agent_logs(result)
+            if offsite_violation is not None:
+                logs["offsite_violation"] = offsite_violation
+
+            return AgentRunResult(
+                summary=summary,
+                uploaded_files=uploaded_files,
+                logs=logs,
+            )
+        finally:
+            try: 
+                if close_browser_session:
+                    await browser_session.kill()
+            except Exception as exc:
+                logger.warning("Failed to close browser session cleanly: %s", exc)
