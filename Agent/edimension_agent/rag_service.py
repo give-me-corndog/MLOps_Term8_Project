@@ -69,6 +69,7 @@ EMBED_MODEL = os.environ.get("RAG_EMBED_MODEL","qwen3-embedding:0.6b")
 GENERATE_MODEL = os.environ.get("RAG_GENERATE_MODEL","ministral-3")
 GUARD_MODEL = os.environ.get("RAG_GUARD_MODEL","ministral-3")
 EVAL_MODEL = os.environ.get("EVAL_MODEL", "ministral-3")
+# EVAL_MODEL = os.environ.get("EVAL_MODEL", "mistral-large-3:675b-cloud")
 
 CHUNK_SIZE = int(os.environ.get("RAG_CHUNK_SIZE","800"))
 CHUNK_OVERLAP = int(os.environ.get("RAG_CHUNK_OVERLAP","300"))
