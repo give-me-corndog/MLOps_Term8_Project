@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 EVAL_QUERIES = [
     # "Assignment 1 due date for MLOps",
     # "Assignment 1 submission criteria for MLOps",
+    "Log into the course page",
     "MLOps Assignment 1 score",
     "STEP course Dissertation Due Dates",
     "List MLOps lab topics",

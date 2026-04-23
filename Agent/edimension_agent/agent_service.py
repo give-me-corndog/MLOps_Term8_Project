@@ -495,6 +495,7 @@ class BrowserTaskRunner:
                 2. Click the course page and when it loads, click on the Content tab to be redirected to the course-specific contents that contains directories like Assignments, Labs etc
                 3. According to the user's query, click on the most appropriate directory to look for the relevant information or files. It may not be named exactly such as Syllabus being called Course Handout.
 <<<<<<< HEAD
+<<<<<<< HEAD
                 4. If the query only requests for the course page, and you have navigated to the course page, then this is a successful completion.
                 5. If the query requires file download, download the file and call the tool 'Upload the newest downloaded PDF to DigitalOcean Spaces' after each downloaded PDF. Be sure to close the tab after you are done downloading to prevent any unexpected stalling errors. Do not continue looking for more files once downloaded.
                 6. If the query asks for information visible directly on the eDimension portal UI (such as assignment deadlines, listing of lab topics, or listing of lecture topics), summarize those findings clearly. DO NOT open or read the actual files/PDFs to gather this information.
@@ -504,6 +505,12 @@ class BrowserTaskRunner:
                 5. If the query asks for information visible directly on the eDimension portal UI (such as assignment deadlines, listing of lab topics, or listing of lecture topics), summarize those findings clearly. DO NOT open or read the actual files/PDFs to gather this information.
                 6. After successful completion, call 'Clean browser-use temporary download folders and stale staged uploads'.
 >>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
+=======
+                4. If the query only requests for the course page, and you have navigated to the course page, then this is a successful completion.
+                5. If the query requires file download(s), download and call the tool 'Upload the newest downloaded PDF to DigitalOcean Spaces' after each downloaded PDF.
+                6. If the query asks for information visible directly on the eDimension portal UI (such as assignment deadlines, listing of lab topics, or listing of lecture topics), summarize those findings clearly. DO NOT open or read the actual files/PDFs to gather this information.
+                7. After successful completion, call 'Clean browser-use temporary download folders and stale staged uploads'.
+>>>>>>> 62d23ee (test--add-base: Add base test case to test login)
 
                 User query:
                 {query}
