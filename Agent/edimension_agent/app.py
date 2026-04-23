@@ -16,7 +16,6 @@ from .crypto import CredentialCipher
 from .db import Database
 from .otp_broker import OtpBroker
 from .telegram.bot import TelegramAgentBot
-from . import lmnr_integration
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +34,12 @@ def _initialize_laminar(settings: Settings) -> None:
     try:
         if settings.lmnr_self_hosted and settings.lmnr_project_api_key:
             Laminar.initialize(
-                project_api_key=settings.lmnr_project_api_key,
-                base_url="http://localhost",
-                http_port=settings.lmnr_http_port,
-                grpc_port=settings.lmnr_grpc_port,
+            project_api_key=settings.lmnr_project_api_key,
+            base_url="http://localhost",
+            http_port=8000,
+            grpc_port=8001,
             )
-            logger.info(f"Laminar initialized with self-hosted endpoints (http:{settings.lmnr_http_port} grpc:{settings.lmnr_grpc_port})")
+            logger.info("Laminar initialized with self-hosted endpoints")
         else:
             Laminar.initialize(project_api_key=settings.lmnr_project_api_key)
             logger.info("Laminar initialized with Laminar Cloud endpoint")
@@ -73,7 +72,6 @@ def create_app() -> FastAPI:
     async def _startup() -> None:
         logger.info("App startup begin")
         _initialize_laminar(settings)
-        lmnr_integration.initialize(enabled=settings.lmnr_enabled)
         await telegram_bot.start()
         logger.info("Telegram webhook configured")
 

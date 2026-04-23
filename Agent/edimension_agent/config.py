@@ -34,8 +34,6 @@ class Settings:
     lmnr_enabled: bool
     lmnr_project_api_key: str
     lmnr_self_hosted: bool
-    lmnr_http_port: int
-    lmnr_grpc_port: int
 
     do_spaces_key: str
     do_spaces_secret: str
@@ -97,8 +95,6 @@ def load_settings() -> Settings:
         lmnr_enabled=_parse_bool(os.getenv("LMNR_ENABLED", "false"), False),
         lmnr_project_api_key=os.getenv("LMNR_PROJECT_API_KEY", "").strip(),
         lmnr_self_hosted=os.getenv("LMNR_SELF_HOSTED", "true").strip(),
-        lmnr_http_port=int(os.getenv("LMNR_HTTP_PORT", "5667")),
-        lmnr_grpc_port=int(os.getenv("LMNR_GRPC_PORT", "5668")),
         do_spaces_key=os.getenv("DO_SPACES_KEY", "").strip(),
         do_spaces_secret=os.getenv("DO_SPACES_SECRET", "").strip(),
         do_spaces_region=do_spaces_region,
