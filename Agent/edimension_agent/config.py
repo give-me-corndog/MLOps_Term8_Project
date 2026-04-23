@@ -48,6 +48,8 @@ class Settings:
     lmnr_self_hosted: bool
     lmnr_http_port: int
     lmnr_grpc_port: int
+    lmnr_http_port: int
+    lmnr_grpc_port: int
 
     do_spaces_key: str
     do_spaces_secret: str
