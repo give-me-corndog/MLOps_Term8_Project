@@ -322,6 +322,10 @@ def _already_ingested(collection: chromadb.Collection, file_name: str) -> bool:
     return len(collection.get(where={"source": file_name}, limit=1)["ids"]) > 0
 
 
+def _ingested_chunk_count(collection: chromadb.Collection, file_name: str) -> int:
+    return len(collection.get(where={"source": file_name})["ids"])
+
+
 def _embed_chunk(args: Tuple[int, str]) -> Tuple[int, list]:
     i, text = args
     return i, _embed_text(text)
@@ -335,13 +339,23 @@ def ingest_pdf_for_user(chat_id: int, file_path: str, force: bool = False) -> in
     collection = _get_collection(chat_id)
     file_name  = os.path.basename(file_path)
 
+    logger.info("Ingestion start: chat_id=%d file=%s force=%s", chat_id, file_name, force)
+
     if not force and _already_ingested(collection, file_name):
-        return len(collection.get(where={"source": file_name})["ids"])
+        existing_count = _ingested_chunk_count(collection, file_name)
+        logger.info(
+            "Vector store already has %d chunks for %s; skipping ingestion",
+            existing_count,
+            file_name,
+        )
+        return existing_count
 
     md_text    = pymupdf4llm.to_markdown(file_path, use_ocr=True, ocr_language="eng")
     clean_text = re.sub(r"\*\*==> picture.*?<==\*\*", "", md_text, flags=re.DOTALL)
     chunks     = _text_splitter.create_documents([clean_text])
     texts      = [c.page_content for c in chunks]
+
+    logger.info("Ingesting %d chunks from %s into ChromaDB", len(texts), file_name)
 
     embeddings: List[list] = [None] * len(texts)
     with ThreadPoolExecutor(max_workers=EMBED_WORKERS) as pool:
@@ -358,6 +372,7 @@ def ingest_pdf_for_user(chat_id: int, file_path: str, force: bool = False) -> in
         metadatas  = [{"source": file_name, "chunk": i, "type": "document"}
                       for i in range(len(chunks))],
     )
+    logger.info("Ingestion done: %s -> %d chunks vectorized and stored", file_name, len(chunks))
     logger.info("Ingested %d chunks from '%s' for user %d", len(chunks), file_name, chat_id)
     return len(chunks)
 

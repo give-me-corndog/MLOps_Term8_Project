@@ -289,6 +289,7 @@ class BrowserTaskRunner:
         ## Build summary string
         usage_summary = await agent.token_cost_service.get_usage_summary()
         cost_line = f"Cost: ${usage_summary.total_cost:.6f} | Latency: {latency:.2f}s"
+        summary = ""  # Initialize summary
         summary = f"{summary}\n{cost_line}" if summary else cost_line
         summary = summary[:500]
 
