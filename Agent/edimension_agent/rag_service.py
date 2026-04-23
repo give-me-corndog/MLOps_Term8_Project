@@ -102,6 +102,31 @@ _sessions: Dict[str, List[Dict]] = {}
 
 _executor = ThreadPoolExecutor(max_workers=EMBED_WORKERS)
 
+# Token & cost tracking
+_session_costs: Dict[str, Dict[str, int | float]] = {}  # session_id -> {tokens, cost_usd}
+
+
+# =============================================================
+# COST TRACKING HELPERS
+# =============================================================
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token count estimate (1 token ≈ 4 characters)."""
+    return max(1, len(text) // 4)
+
+
+def _track_cost(session_id: str, tokens: int, cost_usd: float = 0.0) -> None:
+    """Track tokens and cost for a session."""
+    if session_id not in _session_costs:
+        _session_costs[session_id] = {"tokens": 0, "cost_usd": 0.0}
+    _session_costs[session_id]["tokens"] += tokens
+    _session_costs[session_id]["cost_usd"] += cost_usd
+
+
+def get_session_cost(session_id: str) -> Dict[str, int | float]:
+    """Get token and cost totals for a session."""
+    return _session_costs.get(session_id, {"tokens": 0, "cost_usd": 0.0})
+
 
 # =============================================================
 # HELPERS
@@ -123,8 +148,16 @@ def _embed_text(text: str) -> list:
     return _ollama_client.embeddings(model=EMBED_MODEL, prompt=text)["embedding"]
 
 
-def _generate_text(prompt: str) -> str:
-    return _ollama_client.generate(model=GENERATE_MODEL, prompt=prompt)["response"].strip()
+def _generate_text(prompt: str, session_id: Optional[str] = None) -> str:
+    response = _ollama_client.generate(model=GENERATE_MODEL, prompt=prompt)
+    result = response["response"].strip()
+    
+    # Track tokens if session provided
+    if session_id:
+        tokens = _estimate_tokens(result)
+        _track_cost(session_id, tokens)
+    
+    return result
 
 
 def _run_guard(prompt: str) -> Tuple[bool, str]:
@@ -606,7 +639,8 @@ def query_sync(
                 docs  = [docs[int(i * step)]  for i in range(SUMMARY_CHUNK_LIMIT)]
                 metas = [metas[int(i * step)] for i in range(SUMMARY_CHUNK_LIMIT)]
             answer  = _generate_text(
-                _build_summary_prompt(summary_target, "\n\n".join(docs), history_text)
+                _build_summary_prompt(summary_target, "\n\n".join(docs), history_text),
+                session_id=session_id,
             )
             sources = [summary_target]
         mode = "summarize"
@@ -615,7 +649,8 @@ def query_sync(
         docs, metas = _rerank_chunks(question, initial_docs, initial_metas, top_k=n_results)
 
         answer = _generate_text(
-            _build_prompt(question, "\n\n".join(docs) if docs else "", history_text)
+            _build_prompt(question, "\n\n".join(docs) if docs else "", history_text),
+            session_id=session_id,
         )
         sources = list({m["source"] for m in metas})
         mode    = "retrieve"
