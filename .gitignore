@@ -2,3 +2,7 @@
 *__pycache__/
 app.db
 chroma_store
+Agent/artifacts/downloads
+Agent/chatbot_eval/eval_results.jsonl
+Agent/chatbot_eval/rag_eval_results.jsonl
+Agent/chatbot_eval/reports/
