@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import logging
+import sys
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,11 @@ except ImportError:
     Laminar = None  # type: ignore[assignment]
     evaluate = None  # type: ignore[assignment]
 
+# Ensure sibling package imports work when this script is run as a file.
+AGENT_ROOT = Path(__file__).resolve().parents[1]
+if str(AGENT_ROOT) not in sys.path:
+    sys.path.insert(0, str(AGENT_ROOT))
+
 from edimension_agent.agent_service import BrowserTaskRunner
 from edimension_agent.config import load_settings
 from edimension_agent.db import Database
@@ -28,9 +34,9 @@ from edimension_agent.otp_broker import OtpBroker
 logger = logging.getLogger(__name__)
 
 EVAL_QUERIES = [
+    "Log into the course page",
     # "Assignment 1 due date for MLOps",
     # "Assignment 1 submission criteria for MLOps",
-    "Log into the course page",
     "MLOps Assignment 1 score",
     "STEP course Dissertation Due Dates",
     "List MLOps lab topics",

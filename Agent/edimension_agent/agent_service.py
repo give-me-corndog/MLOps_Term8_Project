@@ -35,9 +35,7 @@ GUARDRAIL_REJECTION_MESSAGE = (
 GUARDRAIL_MODEL = "gemini-2.5-flash-lite"
 BROWSER_LLM_MODEL = "gemini-3-flash-preview" #gemini-3-flash-preview/ministral-3/qwen3.5
 BROWSER_PROFILE = BrowserProfile(
-    minimum_wait_page_load_time=0.1,
-	wait_between_actions=0.1,
-    allowed_domains=['ease.sutd.edu.sg', 'edimension.sutd.edu.sg', 'docs.google.com'],
+    allowed_domains=['ease.sutd.edu.sg', 'edimension.sutd.edu.sg', 'docs.google.com', 'learn-ap-southeast-1-prod-fleet02-xythos.content.blackboardcdn.com'],
 )
 ALLOWED_DOMAINS = tuple(BROWSER_PROFILE.allowed_domains or [])
 MAX_STEPS = 30
