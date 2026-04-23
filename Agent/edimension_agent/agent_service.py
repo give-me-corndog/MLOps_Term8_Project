@@ -57,6 +57,9 @@ ALLOWED_DOMAINS = tuple(BROWSER_PROFILE.allowed_domains or [])
 MAX_STEPS = 30
 >>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
 
+# LOGGING PARAMS
+MODE = "agent"
+
 
 @dataclass
 class AgentRunResult:
@@ -90,9 +93,12 @@ class BrowserTaskRunner:
     async def _guardrail_allows_query(self, query: str, task_id: str, chat_id: int) -> tuple[bool, str]:
         # Logging
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
         Laminar.set_trace_user_id(str(chat_id))
 >>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
+=======
+>>>>>>> 0c18461 (feat--laminar: Use user_id as replacement for status check)
         Laminar.set_trace_session_id(task_id)
 
         guardrail_prompt = f"""
@@ -392,9 +398,12 @@ class BrowserTaskRunner:
         
         # Logging
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
         Laminar.set_trace_user_id(str(chat_id))
 >>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
+=======
+>>>>>>> 0c18461 (feat--laminar: Use user_id as replacement for status check)
         Laminar.set_trace_session_id(task_id)
         Laminar.set_trace_metadata({"live": live, "agent": True})
 
@@ -554,6 +563,7 @@ class BrowserTaskRunner:
                 if isinstance(final, str):
                     summary += final.strip()
 <<<<<<< HEAD
+<<<<<<< HEAD
             
 =======
 
@@ -561,6 +571,9 @@ class BrowserTaskRunner:
             
 
 >>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
+=======
+            
+>>>>>>> 0c18461 (feat--laminar: Use user_id as replacement for status check)
             # Keep Telegram responses concise.
             summary = summary[:500]
 
@@ -586,6 +599,18 @@ class BrowserTaskRunner:
             if offsite_violation is not None:
                 logs["offsite_violation"] = offsite_violation
 >>>>>>> 39089ef (feat--agent_evals: Add static agent evals and real-time agent evals)
+
+            # Update Laminar traces
+            if not bool(logs.get("is_done")) or logs.get("is_successful") is not True:
+                if live:
+                    Laminar.set_trace_user_id(f"{MODE}:live:failed")
+                if not live:
+                    Laminar.set_trace_user_id(f"{MODE}:eval:failed")
+            else:
+                if live:
+                    Laminar.set_trace_user_id(f"{MODE}:live:success")
+                if not live:
+                    Laminar.set_trace_user_id(f"{MODE}:eval:success")
 
             return AgentRunResult(
                 summary=summary,
