@@ -23,7 +23,7 @@ from edimension_agent.config import load_settings
 from edimension_agent.db import Database
 from edimension_agent.otp_broker import OtpBroker
 
-# TO RUN: uv run python agent_service_evals.py --username "<EDIM_USERNAME>" --password "<EDIM_PASSWORD>" --auth-method okta --group-id "agent_service_success_failure"
+# TO RUN: uv run python agent_service_evals.py --username "<EDIM_USERNAME>" --password "<EDIM_PASSWORD>" --auth-method okta --group-name "agent_service_success_failure"
 
 logger = logging.getLogger(__name__)
 
