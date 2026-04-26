@@ -39,7 +39,12 @@ BROWSER_PROFILE = BrowserProfile(
 )
 ALLOWED_DOMAINS = tuple(BROWSER_PROFILE.allowed_domains or [])
 MAX_STEPS = 30
-
+SPEED_OPTIMIZATION_PROMPT = """
+Speed optimization instructions:
+- Be extremely concise and direct in your responses
+- Get to the goal as quickly as possible
+- Use multi-action sequences whenever possible to reduce steps
+""" # From the Browser Use documentation 
 # LOGGING PARAMS
 MODE = "agent"
 
@@ -180,9 +185,9 @@ class BrowserTaskRunner:
             # "action_results": BrowserTaskRunner._serialize_log_value(call_method("action_results")),
             "action_history": BrowserTaskRunner._serialize_log_value(call_method("action_history")),
             # "number_of_steps": BrowserTaskRunner._serialize_log_value(call_method("number_of_steps")),
-            # "total_duration_seconds": BrowserTaskRunner._serialize_log_value(
-            #     call_method("total_duration_seconds")
-            # ),
+            "total_duration_seconds": BrowserTaskRunner._serialize_log_value(
+                call_method("total_duration_seconds")
+            ),
         }
 
     @staticmethod
@@ -458,7 +463,7 @@ class BrowserTaskRunner:
                 2. Click the course page and when it loads, click on the Content tab to be redirected to the course-specific contents that contains directories like Assignments, Labs etc
                 3. According to the user's query, click on the most appropriate directory to look for the relevant information or files. It may not be named exactly such as Syllabus being called Course Handout.
                 4. If the query only requests for the course page, and you have navigated to the course page, then this is a successful completion.
-                5. If the query requires file download(s), download and call the tool 'Upload the newest downloaded PDF to DigitalOcean Spaces' after each downloaded PDF.
+                5. If the query requires file download, download the file and call the tool 'Upload the newest downloaded PDF to DigitalOcean Spaces' after each downloaded PDF. Be sure to close the tab after you are done downloading to prevent any unexpected stalling errors. Do not continue looking for more files once downloaded.
                 6. If the query asks for information visible directly on the eDimension portal UI (such as assignment deadlines, listing of lab topics, or listing of lecture topics), summarize those findings clearly. DO NOT open or read the actual files/PDFs to gather this information.
                 7. After successful completion, call 'Clean browser-use temporary download folders and stale staged uploads'.
 
@@ -476,8 +481,9 @@ class BrowserTaskRunner:
             browser_profile=browser_profile,
             sensitive_data={"username": username, "password": password},
             browser_session=browser_session,
-            use_vision = True if self._settings.browser_llm_provider.strip().lower() in {"google", "gemini", "googlechatmodel", "chatgoogle"} else False,
+            use_vision = False,
             calculate_cost=True,
+            extend_system_prompt = SPEED_OPTIMIZATION_PROMPT
         )
 
         # Defined callbacks per step
@@ -505,7 +511,7 @@ class BrowserTaskRunner:
             # latency = time.perf_counter() - start
 
             # ## Build summary string
-            # usage_summary = await agent.token_cost_service.get_usage_summary()
+            usage_summary = await agent.token_cost_service.get_usage_summary()
             # cost_line = f"Cost: ${usage_summary.total_cost:.6f} | Latency: {latency:.2f}s"
             # summary = f"{cost_line}" if summary else cost_line
             # summary = summary[:500]
@@ -519,8 +525,10 @@ class BrowserTaskRunner:
             summary = summary[:500]
 
             logs = self._collect_agent_logs(result)
+            logs["total_cost"] = usage_summary.total_cost
             if offsite_violation is not None:
-                logs["offsite_violation"] = offsite_violation
+                logs["offsite_violation"] = offsite_violation   
+            
 
             # Update Laminar traces
             if not bool(logs.get("is_done")) or logs.get("is_successful") is not True:

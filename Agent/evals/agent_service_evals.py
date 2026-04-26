@@ -40,9 +40,7 @@ EVAL_QUERIES = [
     "MLOps Assignment 1 score",
     "STEP course Dissertation Due Dates",
     "List MLOps lab topics",
-    "List MLOps lecture topics",
-    # "Download MLOps Course Handout",
-    # "Download MLOps Project Handout which is accessed via a link under the MLOps Course Syllabus document",
+    # "List MLOps lecture topics",
     "Download MLOps Week 1 Lectures Notes",
 ]
 DEFAULT_OUTPUT = Path("agent_service_eval_results.jsonl")
@@ -105,14 +103,46 @@ async def _send_evals_to_laminar(records: list[EvalRecord], project_api_key: str
     if not dataset:
         return
 
+    def _extract_total_duration_seconds(logs: dict | None) -> float | None:
+        if not isinstance(logs, dict):
+            return None
+        raw = logs.get("total_duration_seconds")
+        if raw is None:
+            raw = logs.get("total_duration")
+        try:
+            return float(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            return None
+        
+    def _extract_total_cost(logs: dict | None) -> float | None:
+        if not isinstance(logs, dict):
+            return None
+        raw = logs.get("total_cost")
+        try:
+            return float(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            return None
+
     result = evaluate(
         data=dataset,
         executor=lambda data: {
             "status": data.get("status", "failed"),
             "logs": data.get("logs", {}),
             "error": data.get("error"),
+            "total_duration_seconds": _extract_total_duration_seconds(data.get("logs")),
+            "total_cost": _extract_total_cost(data.get("logs"))
         },
         evaluators={
+            "duration_seconds": lambda output, target: (
+                output.get("total_duration_seconds")
+                if output.get("total_duration_seconds") is not None
+                else -1.0
+            ),
+            "total_cost": lambda output, target: (
+                output.get("total_cost")
+                if output.get("total_cost") is not None
+                else -1.0
+            ),
             "success": lambda output, target: int(output.get("status") == "success"),
             "failure": lambda output, target: int(output.get("status") != "success"),
         },
