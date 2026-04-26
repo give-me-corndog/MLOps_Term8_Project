@@ -5,23 +5,14 @@ import re
 import shutil
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
-import time
 import logging
-from typing import Any
-from urllib.parse import urlparse
+import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import boto3
-from browser_use import ActionResult, Agent, BrowserSession, ChatGoogle, ChatOllama, Tools, BrowserProfile
-from langchain_core.messages import HumanMessage
-
-try:
-    from lmnr import Laminar, observe
-except ImportError:
-    Laminar = None  # type: ignore[assignment]
-from browser_use import ActionResult, Agent, BrowserSession, ChatGoogle, ChatOllama, Tools, BrowserProfile
+from browser_use import ActionResult, Agent, BrowserProfile, BrowserSession, ChatGoogle, ChatOllama, Tools
 from langchain_core.messages import HumanMessage
 
 try:
@@ -42,11 +33,16 @@ GUARDRAIL_REJECTION_MESSAGE = (
     "Include the course name or code, and use RAG for document-content questions."
 )
 GUARDRAIL_MODEL = "gemini-2.5-flash-lite"
-BROWSER_LLM_MODEL = "gemini-3-flash-preview" #gemini-3-flash-preview/ministral-3/qwen3.5
+BROWSER_LLM_MODEL = "gemini-3-flash-preview"  # gemini-3-flash-preview/ministral-3/qwen3.5
 BROWSER_PROFILE = BrowserProfile(
-<<<<<<< HEAD
-<<<<<<< HEAD
-    allowed_domains=['ease.sutd.edu.sg', 'edimension.sutd.edu.sg', 'docs.google.com', 'learn-ap-southeast-1-prod-fleet02-xythos.content.blackboardcdn.com'],
+    minimum_wait_page_load_time=0.1,
+    wait_between_actions=0.1,
+    allowed_domains=[
+        "ease.sutd.edu.sg",
+        "edimension.sutd.edu.sg",
+        "docs.google.com",
+        "learn-ap-southeast-1-prod-fleet02-xythos.content.blackboardcdn.com",
+    ],
 )
 ALLOWED_DOMAINS = tuple(BROWSER_PROFILE.allowed_domains or [])
 MAX_STEPS = 30
@@ -55,18 +51,7 @@ Speed optimization instructions:
 - Be extremely concise and direct in your responses
 - Get to the goal as quickly as possible
 - Use multi-action sequences whenever possible to reduce steps
-""" # From the Browser Use documentation 
-# LOGGING PARAMS
-MODE = "agent"
-=======
-    minimum_wait_page_load_time=0.1,
-	wait_between_actions=0.1,
-    allowed_domains=['ease.sutd.edu.sg', 'edimension.sutd.edu.sg', 'docs.google.com'],
-=======
-    allowed_domains=['ease.sutd.edu.sg', 'edimension.sutd.edu.sg', 'docs.google.com', 'learn-ap-southeast-1-prod-fleet02-xythos.content.blackboardcdn.com'],
-)
-ALLOWED_DOMAINS = tuple(BROWSER_PROFILE.allowed_domains or [])
-MAX_STEPS = 30
+"""
 
 # LOGGING PARAMS
 MODE = "agent"
