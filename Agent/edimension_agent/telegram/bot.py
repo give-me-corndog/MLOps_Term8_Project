@@ -555,7 +555,7 @@ class TelegramAgentBot:
                 query       = query,
                 username    = username,
                 password    = password,
-                auth_method = auth_method,
+                auth_method = auth_method
             )
         except Exception as exc:
             logger.exception("Task %s failed", task_id)
@@ -563,7 +563,7 @@ class TelegramAgentBot:
             await self._send(chat_id, f"Task failed ({task_id}): {exc}")
             return
 
-        payload = {"summary": result.summary, "uploaded_files": result.uploaded_files}
+        payload = {"summary": result.summary, "uploaded_files": result.uploaded_files, "logs": result.logs}
         self.db.complete_task(task_id, payload)
 
         if result.uploaded_files:
