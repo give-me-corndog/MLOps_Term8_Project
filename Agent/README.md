@@ -7,6 +7,40 @@ A Telegram bot for SUTD students that combines two capabilities:
 
 ---
 
+## Project structure
+
+```
+.
+|-- main.py                         # Entry point
+|-- run_eval.py                     # RAG evaluation CLI
+|-- eval_dataset.json               # Static RAG eval questions and references
+|-- eval_results.jsonl              # RAG eval log output
+|-- eval_report_*.json              # Generated RAG aggregate reports
+|-- pyproject.toml
+|-- evals/
+|   |-- agent_service_evals.py      # Static browser-agent eval runner
+|   |-- app.db                      # Eval-local SQLite database
+|   `-- artifacts/                  # Eval downloads and generated artifacts
+|-- artifacts/                      # Runtime artifacts
+|-- chroma_store/                   # Persistent ChromaDB vector store
+`-- edimension_agent/
+    |-- __init__.py
+    |-- app.py                      # FastAPI app factory + webhook endpoint
+    |-- server.py                   # uvicorn runner
+    |-- config.py                   # Settings loaded from environment
+    |-- db.py                       # SQLite database (users + tasks)
+    |-- crypto.py                   # Fernet credential encryption
+    |-- otp_broker.py               # Async OTP request/response coordination
+    |-- agent_service.py            # browser-use task runner + Spaces upload
+    |-- rag_service.py              # RAG pipeline (ingest, retrieve, generate)
+    |-- eval.py                     # RAG LLM-as-judge metrics and reporting
+    |-- lmnr_integration.py         # Laminar metric/event helpers
+    `-- telegram/
+        `-- bot.py                  # aiogram handlers for all commands
+```
+
+---
+
 ## Architecture
 
 ```
@@ -288,24 +322,56 @@ Each user has their own isolated ChromaDB collection (documents ingested by one 
 
 ---
 
-## Project structure
+## Static evaluations
 
+The `evals/` folder contains static evaluations for the browser-agent service. These evals run a fixed set of eDimension tasks through `BrowserTaskRunner`, record each task as success or failure, and export aggregate metrics to Laminar. The current eval set lives in `evals/agent_service_evals.py` as `EVAL_QUERIES` and includes login, course navigation, assignment-score lookup, topic listing, and file-download tasks.
+
+Each run records:
+
+- `success` / `failure` for each browser-agent task
+- `duration_seconds` from the browser-use task logs, when available
+- `total_cost` from the browser-use task logs, when available
+- task summaries, uploaded-file counts, final errors, and raw logs
+
+Before running the evals, make sure Laminar is running and `.env` contains a valid `LMNR_PROJECT_API_KEY`. For self-hosted Laminar, open http://localhost:5667/, create or select a project, and copy the project API key into `.env`.
+
+Run the static browser-agent evals from `Agent/`:
+
+```bash
+uv run python evals/agent_service_evals.py \
+  --username "<EDIM_USERNAME>" \
+  --password "<EDIM_PASSWORD>" \
+  --auth-method okta \
+  --group-name agent_service_success_failure
 ```
-.
-├── main.py                        # Entry point
-├── pyproject.toml
-└── edimension_agent/
-    ├── __init__.py
-    ├── app.py                     # FastAPI app factory + webhook endpoint
-    ├── server.py                  # uvicorn runner
-    ├── config.py                  # Settings loaded from environment
-    ├── db.py                      # SQLite database (users + tasks)
-    ├── crypto.py                  # Fernet credential encryption
-    ├── otp_broker.py              # Async OTP request/response coordination
-    ├── agent_service.py           # browser-use task runner + Spaces upload
-    ├── rag_service.py             # RAG pipeline (ingest, retrieve, generate)
-    └── telegram/
-        └── bot.py                 # aiogram handlers for all commands
+
+Use `--auth-method google_auth` if the test account uses Google Authenticator. If MFA is required during the run, the eval process prints an OTP prompt in the terminal; enter the current code to continue.
+
+Useful options:
+
+```bash
+# Run one or more custom queries instead of the default static list
+uv run python evals/agent_service_evals.py \
+  --username "<EDIM_USERNAME>" \
+  --password "<EDIM_PASSWORD>" \
+  --auth-method okta \
+  --query "Download MLOps Week 1 Lectures Notes"
+
+# Write JSONL results to a custom path
+uv run python evals/agent_service_evals.py \
+  --username "<EDIM_USERNAME>" \
+  --password "<EDIM_PASSWORD>" \
+  --output evals/agent_service_eval_results.jsonl
+```
+
+To view the run in Laminar, open the dashboard at http://localhost:5667/, select the project that owns `LMNR_PROJECT_API_KEY`, then look for the evaluation group named by `--group-name` (default: `agent_service_success_failure`). The group shows the exported `success`, `failure`, `duration_seconds`, and `total_cost` evaluator values for the static run. The browser-agent traces are also tagged as eval traces by `agent_service.py`, which makes successful and failed eval tasks easier to filter from live Telegram traffic.
+
+The repo also includes `run_eval.py`, which evaluates the RAG assistant against `eval_dataset.json` using local LLM-as-judge metrics. Run it from `Agent/` with:
+
+```bash
+uv run python run_eval.py --chat-id <telegram-chat-id>
+uv run python run_eval.py --stats
+uv run python run_eval.py --recent 10
 ```
 
 ---
