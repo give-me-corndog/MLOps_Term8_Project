@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from Agent.evals import lmnr_integration
 from dotenv import load_dotenv
 
 try:
@@ -35,7 +36,7 @@ AGENT_ROOT = Path(__file__).resolve().parent.parent  # Go up to Agent/ directory
 if str(AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(AGENT_ROOT))
 
-from edimension_agent import rag_service, lmnr_integration
+from edimension_agent import rag_service
 from edimension_agent.eval import score_faithfulness, score_context_precision
 
 logger = logging.getLogger(__name__)

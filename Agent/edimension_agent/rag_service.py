@@ -54,7 +54,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import math
 import threading
 
-from . import rag_observability
+from ..evals import rag_observability
 
 logger = logging.getLogger(__name__)
 

@@ -20,30 +20,14 @@ import os
 import re
 import time
 import uuid
-<<<<<<< HEAD
-<<<<<<< HEAD
 import logging
-=======
->>>>>>> e4133e6 (RAG Evaluation set)
-=======
-import logging
->>>>>>> main
 from dataclasses import dataclass, asdict
 from typing import Optional
 
 import ollama as _ollama
-<<<<<<< HEAD
-<<<<<<< HEAD
-from . import lmnr_integration
+from ..evals import lmnr_integration
 
 logger = logging.getLogger(__name__)
-=======
->>>>>>> e4133e6 (RAG Evaluation set)
-=======
-from . import lmnr_integration
-
-logger = logging.getLogger(__name__)
->>>>>>> main
 
 # ─────────────────────────────────────────────────────────────
 # CONFIG
@@ -53,21 +37,10 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "ministral-3")
 EVAL_LOG = os.environ.get("EVAL_LOG", "eval_results.jsonl")
 EVAL_DATASET = os.environ.get("EVAL_DATASET", "eval_dataset.json")
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> main
 PUSH_TO_LAMINAR = os.environ.get("PUSH_TO_LAMINAR", "true").lower() == "true"
 
 _ollama_client = _ollama.Client(host=OLLAMA_HOST)
 _total_tokens = 0  # Track total tokens across evaluations
-<<<<<<< HEAD
-=======
-
-_ollama_client = _ollama.Client(host=OLLAMA_HOST)
->>>>>>> e4133e6 (RAG Evaluation set)
-=======
->>>>>>> main
 
 # ─────────────────────────────────────────────────────────────
 # DATA STRUCTURES
@@ -92,16 +65,8 @@ class EvalResult:
     session_id: Optional[str] = None
     latency_ms: Optional[float] = None
     feedback: Optional[int] = None
-<<<<<<< HEAD
-<<<<<<< HEAD
     token_count: Optional[int] = None  # Total tokens used for this evaluation
     cost_usd: Optional[float] = None  # Estimated cost in USD
-=======
->>>>>>> e4133e6 (RAG Evaluation set)
-=======
-    token_count: Optional[int] = None  # Total tokens used for this evaluation
-    cost_usd: Optional[float] = None  # Estimated cost in USD
->>>>>>> main
 
 
 # ─────────────────────────────────────────────────────────────
@@ -249,10 +214,6 @@ Respond with:
 
 
 # ─────────────────────────────────────────────────────────────
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> main
 # TOKEN COUNTING & COST TRACKING
 # ─────────────────────────────────────────────────────────────
 
@@ -281,11 +242,6 @@ def _get_eval_token_count(eval_id: str) -> int:
 
 
 # ─────────────────────────────────────────────────────────────
-<<<<<<< HEAD
-=======
->>>>>>> e4133e6 (RAG Evaluation set)
-=======
->>>>>>> main
 # MAIN EVALUATION ENTRY POINT
 # ─────────────────────────────────────────────────────────────
 
@@ -300,10 +256,6 @@ def evaluate(
     latency_ms: Optional[float] = None,
 ) -> EvalResult:
     context = "\n\n".join(context_chunks)
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> main
     eval_id = str(uuid.uuid4())
     
     # Track token usage for this evaluation
@@ -311,14 +263,6 @@ def evaluate(
 
     result = EvalResult(
         eval_id=eval_id,
-<<<<<<< HEAD
-=======
-
-    result = EvalResult(
-        eval_id=str(uuid.uuid4()),
->>>>>>> e4133e6 (RAG Evaluation set)
-=======
->>>>>>> main
         timestamp=time.time(),
         question=question,
         answer=answer,
@@ -330,10 +274,6 @@ def evaluate(
     )
 
     result.faithfulness = score_faithfulness(question, context, answer)
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> main
     _track_token_count(eval_id, _count_tokens_estimate(context + answer))
 
     result.answer_relevancy = score_answer_relevancy(question, answer)
@@ -349,16 +289,6 @@ def evaluate(
     # Set final token count and cost estimate (placeholder for now)
     result.token_count = _get_eval_token_count(eval_id)
     result.cost_usd = None  # Would be calculated based on model pricing
-<<<<<<< HEAD
-=======
-    result.answer_relevancy = score_answer_relevancy(question, answer)
-    result.context_precision = score_context_precision(question, context_chunks)
-
-    if reference_answer:
-        result.context_recall = score_context_recall(context, reference_answer, question)
->>>>>>> e4133e6 (RAG Evaluation set)
-=======
->>>>>>> main
 
     _log_result(result)
     return result
@@ -518,10 +448,6 @@ def get_recent_evals(limit: int = 20) -> list[dict]:
 
 
 def _log_result(result: EvalResult) -> None:
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> main
     """
     Log evaluation result to JSONL file and optionally push to Laminar.
     """
@@ -541,10 +467,3 @@ def _log_result(result: EvalResult) -> None:
                 logger.warning(f"Quality degradation for eval {result.eval_id}: {violations}")
         except Exception as exc:
             logger.warning(f"Failed to push eval result to Laminar: {exc}")
-<<<<<<< HEAD
-=======
-    with open(EVAL_LOG, "a") as f:
-        f.write(json.dumps(asdict(result)) + "\n")
->>>>>>> e4133e6 (RAG Evaluation set)
-=======
->>>>>>> main
