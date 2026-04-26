@@ -3,12 +3,24 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from dotenv import load_dotenv
 
 
 def _parse_bool(raw: str, default: bool = False) -> bool:
     if not raw:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _load_environment() -> None:
+    """Load env vars from common project locations without overriding shell vars."""
+    config_file = Path(__file__).resolve()
+    agent_root = config_file.parents[1]
+    repo_root = config_file.parents[2]
+
+    for env_path in (agent_root / ".env", repo_root / ".env"):
+        if env_path.exists():
+            load_dotenv(dotenv_path=env_path, override=False)
 
 
 @dataclass(frozen=True)
@@ -48,6 +60,8 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    _load_environment()
+
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     webhook_url = os.getenv("TELEGRAM_WEBHOOK_URL", "").strip()
     webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
