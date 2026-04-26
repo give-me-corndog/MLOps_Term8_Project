@@ -16,7 +16,13 @@ from .crypto import CredentialCipher
 from .db import Database
 from .otp_broker import OtpBroker
 from .telegram.bot import TelegramAgentBot
-from ..evals import lmnr_integration
+try:
+    from evals import lmnr_integration
+except ImportError:
+    try:
+        from Agent.evals import lmnr_integration
+    except ImportError:
+        lmnr_integration = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 

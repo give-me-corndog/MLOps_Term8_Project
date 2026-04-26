@@ -54,7 +54,13 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import math
 import threading
 
-from ..evals import rag_observability
+try:
+    from evals import rag_observability
+except ImportError:
+    try:
+        from Agent.evals import rag_observability
+    except ImportError:
+        rag_observability = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 

@@ -25,7 +25,13 @@ from dataclasses import dataclass, asdict
 from typing import Optional
 
 import ollama as _ollama
-from ..evals import lmnr_integration
+try:
+    from evals import lmnr_integration
+except ImportError:
+    try:
+        from Agent.evals import lmnr_integration
+    except ImportError:
+        lmnr_integration = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -455,7 +461,7 @@ def _log_result(result: EvalResult) -> None:
         f.write(json.dumps(asdict(result)) + "\n")
 
     # Push to Laminar if enabled
-    if PUSH_TO_LAMINAR:
+    if PUSH_TO_LAMINAR and lmnr_integration is not None:
         try:
             lmnr_integration.push_eval_result(asdict(result))
             violations = lmnr_integration.check_and_alert(
