@@ -37,8 +37,3 @@ Summarization Tests:
 3. Write a summary for the MLOps Course Handout 2026
 4. What is Course Handout -- MLOps Concepts 2026 about?
 5. Summarize Deep Learning Lecture 5 (should fail)
-=======
-Common Sense Tests:
-1. What color is a red rose
-2. 
->>>>>>> 0e15947 (added file size limit)

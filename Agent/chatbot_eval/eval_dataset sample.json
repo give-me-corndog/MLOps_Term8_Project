@@ -1,0 +1,63 @@
+[
+  {
+    "question": "What is the main topic covered in the uploaded materials?",
+    "reference_answer": "The materials focus on MLOps, describing how ML and DevOps practices merge to manage data, models, deployment, and operations across the lifecycle."
+  },
+  {
+    "question": "Can you summarise the key concepts from the course?",
+    "reference_answer": "Key concepts include a data-centric MLOps lifecycle, experiment tracking, modern model architectures (Transformers), embedding-based retrieval, fine-tuning methods like LoRA and RLHF, evaluation with benchmarks/LLM-as-judge, CI/CD deployment (canary/shadow), monitoring for drift, and real-world product/legal considerations."
+  },
+  {
+    "question": "What assignment or assessment requirements are described?",
+    "reference_answer": null
+  },
+  {
+    "question": "What are the key stages of the MLOps lifecycle described in Week 1-2?",
+    "reference_answer": "Weeks 1-2 frame MLOps as the integration of ML and DevOps with a data-centric lifecycle: data management and versioning, tracking experiments, and managing the end-to-end ML system lifecycle.",
+    "type": "concept",
+    "tags": ["mlops", "lifecycle", "overview"],
+    "expected_sources": []
+  },
+  {
+    "question": "Summarise the main points from Week 3 on data versioning and dataset management.",
+    "reference_answer": "Week 3 emphasizes data-centric MLOps practices: managing and versioning datasets, and tracking data changes as part of the ML experiment lifecycle.",
+    "type": "summary",
+    "tags": ["data", "versioning", "datasets"],
+    "expected_sources": []
+  },
+  {
+    "question": "What steps are recommended for setting up experiment tracking in Week 4?",
+    "reference_answer": null,
+    "type": "step",
+    "tags": ["experiment", "tracking", "setup"],
+    "expected_sources": []
+  },
+  {
+    "question": "Explain the difference between training-serving skew and concept drift mentioned in Week 5.",
+    "reference_answer": null,
+    "type": "technical",
+    "tags": ["drift", "skew", "monitoring"],
+    "expected_sources": []
+  },
+  {
+    "question": "What evaluation metrics are emphasized for model performance in Week 6-7?",
+    "reference_answer": "Weeks 6-7 emphasize benchmarking and using an LLM-as-judge approach to evaluate model performance.",
+    "type": "general",
+    "tags": ["metrics", "evaluation", "performance"],
+    "expected_sources": []
+  },
+  {
+    "question": "Describe the deployment options or architectures discussed in Week 8.",
+    "reference_answer": null,
+    "type": "concept",
+    "tags": ["deployment", "architecture", "serving"],
+    "expected_sources": []
+  },
+  {
+    "question": "What operational practices for monitoring and alerting are covered in Week 9-11?",
+    "reference_answer": "The materials highlight monitoring live models for data drift and setting retraining triggers, along with operational roles and lifecycle responsibilities in ML projects.",
+    "type": "admin",
+    "tags": ["monitoring", "alerting", "operations"],
+    "expected_sources": []
+  }
+]

@@ -10,8 +10,17 @@ import time
 import logging
 from typing import Any
 from urllib.parse import urlparse
+from typing import Any
+from urllib.parse import urlparse
 
 import boto3
+from browser_use import ActionResult, Agent, BrowserSession, ChatGoogle, ChatOllama, Tools, BrowserProfile
+from langchain_core.messages import HumanMessage
+
+try:
+    from lmnr import Laminar, observe
+except ImportError:
+    Laminar = None  # type: ignore[assignment]
 from browser_use import ActionResult, Agent, BrowserSession, ChatGoogle, ChatOllama, Tools, BrowserProfile
 from langchain_core.messages import HumanMessage
 
@@ -35,6 +44,8 @@ GUARDRAIL_REJECTION_MESSAGE = (
 GUARDRAIL_MODEL = "gemini-2.5-flash-lite"
 BROWSER_LLM_MODEL = "gemini-3-flash-preview" #gemini-3-flash-preview/ministral-3/qwen3.5
 BROWSER_PROFILE = BrowserProfile(
+<<<<<<< HEAD
+<<<<<<< HEAD
     allowed_domains=['ease.sutd.edu.sg', 'edimension.sutd.edu.sg', 'docs.google.com', 'learn-ap-southeast-1-prod-fleet02-xythos.content.blackboardcdn.com'],
 )
 ALLOWED_DOMAINS = tuple(BROWSER_PROFILE.allowed_domains or [])
@@ -45,6 +56,18 @@ Speed optimization instructions:
 - Get to the goal as quickly as possible
 - Use multi-action sequences whenever possible to reduce steps
 """ # From the Browser Use documentation 
+# LOGGING PARAMS
+MODE = "agent"
+=======
+    minimum_wait_page_load_time=0.1,
+	wait_between_actions=0.1,
+    allowed_domains=['ease.sutd.edu.sg', 'edimension.sutd.edu.sg', 'docs.google.com'],
+=======
+    allowed_domains=['ease.sutd.edu.sg', 'edimension.sutd.edu.sg', 'docs.google.com', 'learn-ap-southeast-1-prod-fleet02-xythos.content.blackboardcdn.com'],
+)
+ALLOWED_DOMAINS = tuple(BROWSER_PROFILE.allowed_domains or [])
+MAX_STEPS = 30
+
 # LOGGING PARAMS
 MODE = "agent"
 
