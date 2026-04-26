@@ -1,5 +1,5 @@
 """
-Async-friendly RAG service for the Telegram bot.
+Async-friendly RAG service for the Telegram bot....
 
 Key differences from the Flask-era rag.py:
 - Uses Ollama for embeddings and generation. The Ollama host is configurable via OLLAMA_HOST 
@@ -55,6 +55,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 import math
 import threading
+
+from . import rag_observability
 
 logger = logging.getLogger(__name__)
 
@@ -570,6 +572,7 @@ def _build_summary_prompt(file_name: str, context: str, history_text: str) -> st
 # MAIN QUERY PIPELINE
 # =============================================================
 
+@rag_observability.observe_query(name="rag.query_sync")
 def query_sync(
     chat_id: int,
     question: str,
@@ -588,6 +591,14 @@ def query_sync(
 
     session_id   = get_or_create_session(session_id)
     history      = get_history(session_id)
+
+    # Real-time trace metadata for this query lifecycle.
+    rag_observability.begin_query_trace(
+        chat_id=chat_id,
+        session_id=session_id,
+        question=question,
+        mode="live",
+    )
 
     if _is_history_relevant(question, history):
         history_text = build_history_text(history)
@@ -613,16 +624,35 @@ def query_sync(
         msg = msgs.get(layer, "I'm unable to respond to that request.")
         append_history(session_id, "user", question)
         append_history(session_id, "assistant", msg)
+        latency = round((time.time() - t0) * 1000, 1)
+        rag_observability.log_query_result(
+            chat_id=chat_id,
+            session_id=session_id,
+            question=question,
+            answer=msg,
+            blocked=True,
+            block_reason=reason,
+            latency_ms=latency,
+            mode="blocked",
+            sources=[],
+            context_chunks_count=0,
+            faithfulness=0.0,
+            context_precision=0.0,
+            trace_status="blocked",
+        )
         return {
             "answer": msg,
             "sources": [],
             "session_id": session_id,
             "context_chunks": [],
-            "latency_ms": round((time.time() - t0) * 1000, 1),
+            "latency_ms": latency,
             "mode": "blocked",
             "blocked": True,
             "block_reason": reason,
             "block_layer": layer,
+            "faithfulness": 0.0,
+            "context_precision": 0.0,
+            "trace_status": "blocked",
         }
 
     # 1. INPUT GUARDRAIL
@@ -671,14 +701,56 @@ def query_sync(
     append_history(session_id, "user", question)
     append_history(session_id, "assistant", answer)
 
+    latency = round((time.time() - t0) * 1000, 1)
+
+    faithfulness: Optional[float] = None
+    context_precision: Optional[float] = None
+    answer_quality: Optional[float] = None
+    faith_reason: Optional[str] = None
+    answer_quality_reason: Optional[str] = None
+
+    faithfulness, faith_reason = eval_faithfulness(answer, docs)
+    context_precision = eval_context_precision(question, docs)
+    
+    trace_status = "SUCCESS"
+
+    if EVAL_ENABLED:
+        faithfulness, faith_reason = eval_faithfulness(answer, docs)
+        context_precision = eval_context_precision(question, docs)
+        answer_quality, answer_quality_reason = eval_answer_quality(question, answer)
+        if faithfulness < 0.5 and context_precision < 0.5:
+            trace_status = "failed"
+
+    rag_observability.log_query_result(
+        chat_id=chat_id,
+        session_id=session_id,
+        question=question,
+        answer=answer,
+        blocked=False,
+        block_reason=None,
+        latency_ms=latency,
+        mode=mode,
+        sources=sources,
+        context_chunks_count=len(docs),
+        faithfulness=faithfulness,
+        context_precision=context_precision,
+        trace_status=trace_status,
+    )
+
     _fire_eval_background(
         chat_id=chat_id,
+        session_id=session_id,
         question=question,
         answer=answer,
         context_chunks=docs,
         sources=sources,
-        latency_ms=round((time.time() - t0) * 1000, 1),
-        mode=mode
+        latency_ms=latency,
+        mode=mode,
+        precomputed_faithfulness=faithfulness,
+        precomputed_context_precision=context_precision,
+        precomputed_answer_quality=answer_quality,
+        precomputed_faith_reason=faith_reason,
+        precomputed_answer_quality_reason=answer_quality_reason,
     )
 
     return {
@@ -686,9 +758,12 @@ def query_sync(
         "sources": sources,
         "session_id": session_id,
         "context_chunks": docs,
-        "latency_ms": round((time.time() - t0) * 1000, 1),
+        "latency_ms": latency,
         "mode": mode,
         "blocked": False,
+        "faithfulness": faithfulness,
+        "context_precision": context_precision,
+        "trace_status": trace_status,
     }
 
 
@@ -873,12 +948,18 @@ def eval_answer_quality(question: str, answer: str) -> Tuple[float, str]:
  
 def evaluate_and_log(
     chat_id: int,
+    session_id: str,
     question: str,
     answer: str,
     context_chunks: List[str],
     sources: List[str],
     latency_ms: float,
     mode: str,
+    precomputed_faithfulness: Optional[float] = None,
+    precomputed_context_precision: Optional[float] = None,
+    precomputed_answer_quality: Optional[float] = None,
+    precomputed_faith_reason: Optional[str] = None,
+    precomputed_answer_quality_reason: Optional[str] = None,
 ) -> None:
     """
     Compute all metrics and log them to the terminal.
@@ -888,9 +969,20 @@ def evaluate_and_log(
         return
  
     try:
-        faithfulness, faith_reason = eval_faithfulness(answer, context_chunks)
-        context_precision = eval_context_precision(question, context_chunks)
-        answer_quality, aq_reason = eval_answer_quality(question, answer)
+        if (
+            precomputed_faithfulness is None
+            or precomputed_context_precision is None
+            or precomputed_answer_quality is None
+        ):
+            faithfulness, faith_reason = eval_faithfulness(answer, context_chunks)
+            context_precision = eval_context_precision(question, context_chunks)
+            answer_quality, aq_reason = eval_answer_quality(question, answer)
+        else:
+            faithfulness = precomputed_faithfulness
+            context_precision = precomputed_context_precision
+            answer_quality = precomputed_answer_quality
+            faith_reason = precomputed_faith_reason or "Precomputed score"
+            aq_reason = precomputed_answer_quality_reason or "Precomputed score"
  
         sep = "─" * 60
         _eval_logger.info(
@@ -917,23 +1009,73 @@ def evaluate_and_log(
             latency_ms,
             sep,
         )
+
+        # Emit an enriched query_result event with final quality metrics attached.
+        trace_status = "failed" if (faithfulness < 0.5 and context_precision < 0.5) else "success"
+        rag_observability.log_query_result(
+            chat_id=chat_id,
+            session_id=session_id,
+            question=question,
+            answer=answer,
+            blocked=False,
+            block_reason=None,
+            latency_ms=latency_ms,
+            mode=mode,
+            sources=sources,
+            context_chunks_count=len(context_chunks),
+            faithfulness=faithfulness,
+            context_precision=context_precision,
+            trace_status=trace_status,
+        )
+
+        rag_observability.log_quality_metrics(
+            chat_id=chat_id,
+            session_id=session_id,
+            mode=mode,
+            question=question,
+            sources=sources,
+            latency_ms=latency_ms,
+            faithfulness=faithfulness,
+            context_precision=context_precision,
+            answer_quality=answer_quality,
+        )
     except Exception as exc:
         _eval_logger.warning("Evaluation failed unexpectedly: %s", exc)
  
  
 def _fire_eval_background(
     chat_id: int,
+    session_id: str,
     question: str,
     answer: str,
     context_chunks: List[str],
     sources: List[str],
     latency_ms: float,
     mode: str,
+    precomputed_faithfulness: Optional[float] = None,
+    precomputed_context_precision: Optional[float] = None,
+    precomputed_answer_quality: Optional[float] = None,
+    precomputed_faith_reason: Optional[str] = None,
+    precomputed_answer_quality_reason: Optional[str] = None,
 ) -> None:
     """Launch evaluate_and_log in a daemon thread so it never blocks the caller."""
     t = threading.Thread(
         target=evaluate_and_log,
-        args=(chat_id, question, answer, context_chunks, sources, latency_ms, mode),
+        args=(
+            chat_id,
+            session_id,
+            question,
+            answer,
+            context_chunks,
+            sources,
+            latency_ms,
+            mode,
+            precomputed_faithfulness,
+            precomputed_context_precision,
+            precomputed_answer_quality,
+            precomputed_faith_reason,
+            precomputed_answer_quality_reason,
+        ),
         daemon=True,
     )
     t.start()
