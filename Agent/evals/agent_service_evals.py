@@ -40,13 +40,7 @@ EVAL_QUERIES = [
     "MLOps Assignment 1 score",
     "STEP course Dissertation Due Dates",
     "List MLOps lab topics",
-<<<<<<< HEAD
     # "List MLOps lecture topics",
-=======
-    "List MLOps lecture topics",
-    # "Download MLOps Course Handout",
-    # "Download MLOps Project Handout which is accessed via a link under the MLOps Course Syllabus document",
->>>>>>> f57c7f8 (evals--move: Update evals file location and allow eDimension download)
     "Download MLOps Week 1 Lectures Notes",
 ]
 DEFAULT_OUTPUT = Path("agent_service_eval_results.jsonl")
@@ -109,7 +103,6 @@ async def _send_evals_to_laminar(records: list[EvalRecord], project_api_key: str
     if not dataset:
         return
 
-<<<<<<< HEAD
     def _extract_total_duration_seconds(logs: dict | None) -> float | None:
         if not isinstance(logs, dict):
             return None
@@ -130,15 +123,12 @@ async def _send_evals_to_laminar(records: list[EvalRecord], project_api_key: str
         except (TypeError, ValueError):
             return None
 
-=======
->>>>>>> f57c7f8 (evals--move: Update evals file location and allow eDimension download)
     result = evaluate(
         data=dataset,
         executor=lambda data: {
             "status": data.get("status", "failed"),
             "logs": data.get("logs", {}),
             "error": data.get("error"),
-<<<<<<< HEAD
             "total_duration_seconds": _extract_total_duration_seconds(data.get("logs")),
             "total_cost": _extract_total_cost(data.get("logs"))
         },
@@ -153,10 +143,6 @@ async def _send_evals_to_laminar(records: list[EvalRecord], project_api_key: str
                 if output.get("total_cost") is not None
                 else -1.0
             ),
-=======
-        },
-        evaluators={
->>>>>>> f57c7f8 (evals--move: Update evals file location and allow eDimension download)
             "success": lambda output, target: int(output.get("status") == "success"),
             "failure": lambda output, target: int(output.get("status") != "success"),
         },
