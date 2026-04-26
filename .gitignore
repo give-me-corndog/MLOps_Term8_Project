@@ -1,8 +1,20 @@
+# Python stuff
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Databases/Chroma
+*.sqlite3
+**/chroma_store/
+app.db
+
 .env
 *__pycache__/
-app.db
-chroma_store
-Agent/artifacts/downloads
-Agent/chatbot_eval/eval_results.jsonl
-Agent/chatbot_eval/rag_eval_results.jsonl
+**/__pycache__/
+
+# Environment and Eval
+.env
+Agent/artifacts/downloads/
 Agent/chatbot_eval/reports/
+
